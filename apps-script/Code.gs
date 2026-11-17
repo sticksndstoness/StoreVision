@@ -82,7 +82,7 @@ function vision_(b) {
   var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!key) return { ok: false, error: 'GEMINI_API_KEY is not set in Script Properties' };
   if (!b.image || b.image.length > 6 * 1024 * 1024) return { ok: false, error: 'Missing or oversized image' };
-  var model = /^[a-z0-9.\-]+$/i.test(b.model || '') ? b.model : 'gemini-2.5-flash';
+  var model = /^[a-z0-9.\-]+$/i.test(b.model || '') ? b.model : 'gemini-3.8-flash';
   var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-goog-api-key': key },

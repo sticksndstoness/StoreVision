@@ -37,6 +37,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
   await page.setInputFiles('#labelGallery', png);
   await page.waitForFunction(() => document.getElementById('partNoInput').value !== '');
   ok(geminiHeaders['x-goog-api-key'] === 'KEY123' && !geminiUrl.includes('KEY123'), 'API key sent in header, not URL');
+  ok(geminiUrl.includes('models/gemini-3.8-flash:'), 'default model is gemini-3.8-flash (retired 2.5 value ignored)');
   ok((await page.inputValue('#mrpInput')) === '100' && (await page.inputValue('#descInput')) === 'AIR FILTER' && (await page.inputValue('#mfgInput')) === '08/2026', 'label fields filled from AI');
   await page.setInputFiles('#stackGallery', png);
   await page.waitForFunction(() => document.querySelectorAll('#pinsLayer button').length > 0);

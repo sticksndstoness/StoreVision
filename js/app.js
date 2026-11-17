@@ -5,7 +5,8 @@
   const $ = (id) => document.getElementById(id);
 
   const LS = { LOG: 'sv_inventory_log', KEY: 'sv_gemini_key', URL: 'sv_webhook_url', TOKEN: 'sv_webhook_token', PROXY: 'sv_use_proxy', MODEL: 'sv_model' };
-  const DEFAULT_MODEL = 'gemini-2.5-flash';
+  const DEFAULT_MODEL = 'gemini-3.8-flash';
+  const RETIRED_MODELS = ['gemini-2.5-flash']; // Google no longer serves these to new keys; fall back to the default
   const FETCH_TIMEOUT_MS = 45000;
 
   /* ---------- safe storage ---------- */
@@ -53,9 +54,10 @@
   function hideToast() { $('toast').classList.add('hidden'); }
 
   /* ---------- settings ---------- */
+  const usableModel = (m) => (!m || RETIRED_MODELS.includes(m.trim())) ? DEFAULT_MODEL : m.trim();
   const settings = () => ({
     key: store.get(LS.KEY), url: store.get(LS.URL), token: store.get(LS.TOKEN),
-    proxy: store.get(LS.PROXY) === '1', model: store.get(LS.MODEL) || DEFAULT_MODEL
+    proxy: store.get(LS.PROXY) === '1', model: usableModel(store.get(LS.MODEL))
   });
   function openSettings() {
     const s = settings();
@@ -141,6 +143,12 @@
 2. Detect every individual stacked box, carton, bucket, or product unit ${focusCenter ? 'in the primary foreground/center rack or stack (ignore distant background aisles and loose floor debris)' : 'visible in the image'}.
 Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to bottom=1000) relative to the whole image. One entry per unit; do not repeat the same unit.`;
 
+  /** Retired/unknown model errors are common; tell the user exactly where to fix it. */
+  function modelHint(msg) {
+    return /no longer available|not found|is not supported|deprecated/i.test(msg)
+      ? msg + ' — open Setup and change "Gemini Model" (try ' + DEFAULT_MODEL + ').' : msg;
+  }
+
   async function callGemini(base64Image, promptText, schema) {
     const s = settings();
     if (s.proxy) {
@@ -150,7 +158,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
         body: JSON.stringify({ action: 'vision', token: s.token, model: s.model, prompt: promptText, image: base64Image, schema })
       });
       let body; try { body = await res.json(); } catch (e) { throw new Error('Proxy returned an unreadable response. Check the Apps Script deployment.'); }
-      if (!body.ok) throw new Error(body.error || 'Proxy error');
+      if (!body.ok) throw new Error(modelHint(body.error || 'Proxy error'));
       return C.parseModelJson(C.extractGeminiText(body.result));
     }
     if (!s.key) { openSettings(); throw new Error('Please enter your Gemini API Key in Setup first.'); }
@@ -165,7 +173,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error((err.error && err.error.message) || `API Error (${res.status})`);
+      throw new Error(modelHint((err.error && err.error.message) || `API Error (${res.status})`));
     }
     return C.parseModelJson(C.extractGeminiText(await res.json()));
   }
