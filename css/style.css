@@ -1,0 +1,22 @@
+* { -webkit-tap-highlight-color: transparent; }
+body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.pin-dot {
+  transform: translate(-50%, -50%);
+  transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.85), 0 0 0 2px #0f172a;
+  width: 26px; height: 26px;
+}
+/* enlarge the touch target to ~44px without enlarging the visible dot */
+.pin-dot::after { content: ""; position: absolute; inset: -9px; border-radius: 9999px; }
+.pin-dot:active { transform: translate(-50%, -50%) scale(1.25); }
+.pin-manual { background: linear-gradient(135deg, #38bdf8, #0284c7); }
+.pin-ai { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.scan-line {
+  position: absolute; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, transparent, #38bdf8, #f59e0b, transparent);
+  box-shadow: 0 0 12px #38bdf8;
+  animation: scanMove 1.8s ease-in-out infinite;
+}
+@keyframes scanMove { 0%, 100% { top: 6%; } 50% { top: 92%; } }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
