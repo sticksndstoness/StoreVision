@@ -15,7 +15,7 @@
 var SHEET_NAME = 'Inventory';
 var HEADERS = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date',
   'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value',
-  'AI Counted', 'Edited', 'Updated At'];
+  'AI Counted', 'Edited', 'Counted/Verified', 'Updated At'];
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
@@ -64,7 +64,7 @@ function appendEntry_(en) {
     var row = [en.id, en.isoTime, en.zone, en.partNo, en.description, en.barcode, en.mfgDate,
       Number(en.visibleCount) || 0, Number(en.hiddenQty) || 0, Number(en.depthMult) || 1,
       Number(en.totalQty) || 0, Number(en.mrp) || 0, Number(en.totalValue) || 0,
-      en.aiCounted ? 'yes' : 'no', en.edited ? 'yes' : 'no', new Date().toISOString()].map(safeCell_);
+      en.aiCounted ? 'yes' : 'no', en.edited ? 'yes' : 'no', en.counted ? 'yes' : 'no', new Date().toISOString()].map(safeCell_);
     var last = sh.getLastRow();
     var rowIdx = -1;
     if (last > 1) {

@@ -199,11 +199,22 @@
         <h3 id="h-log" class="text-sm font-bold text-white"><i class="fa-solid fa-clipboard-list text-amber-400 mr-1.5" aria-hidden="true"></i>Inventory Log (<span id="logCount">0</span>)</h3>
         <div class="flex items-center gap-1.5">
           <button id="retryAllBtn" type="button" class="hidden px-2.5 py-1.5 rounded-lg bg-amber-500/20 text-[11px] font-semibold text-amber-300 border border-amber-500/40"><i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Retry <span id="unsyncedCount">0</span></button>
-          <button id="exportCsvBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-solid fa-file-csv mr-1 text-emerald-400" aria-hidden="true"></i>CSV</button>
+          <button id="exportCsvBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-solid fa-file-csv mr-1 text-emerald-400" aria-hidden="true"></i><span id="csvLabel">CSV</span></button>
           <button id="shareBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-brands fa-whatsapp mr-1 text-green-400" aria-hidden="true"></i>Share</button>
         </div>
       </div>
-      <div id="logList" class="space-y-2 max-h-80 overflow-y-auto"></div>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="col-span-2"><span class="sr-only">Search log</span>
+          <input id="logSearch" type="search" placeholder="Search part no, description, barcode…" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-sky-500 focus:outline-none" /></label>
+        <label><span class="sr-only">Filter by bay</span>
+          <select id="logZoneFilter" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-amber-300"><option value="">All bays</option></select></label>
+        <label><span class="sr-only">Filter by counted status</span>
+          <select id="logCountedFilter" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-slate-200">
+            <option value="">All entries</option><option value="no">To verify</option><option value="yes">Verified</option></select></label>
+        <label class="col-span-2 flex items-center gap-2 text-[11px] text-slate-300"><input id="logGroupToggle" type="checkbox" class="accent-amber-500 w-4 h-4" /> Group by bay with subtotals</label>
+      </div>
+      <p id="logSummary" class="text-[11px] text-slate-400"></p>
+      <div id="logList" class="space-y-2 max-h-[28rem] overflow-y-auto"></div>
       <button id="clearLogBtn" type="button" class="hidden w-full text-[11px] text-rose-300/80 underline py-1">Clear entire local log</button>
     </section>
   </main>

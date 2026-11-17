@@ -21,4 +21,21 @@ t('extractGeminiText errors', () => {
 t('parseModelJson handles fences + bad json', () => { assert.deepStrictEqual(C.parseModelJson('```json\n{"a":1}\n```'), { a: 1 }); assert.throws(() => C.parseModelJson('{oops'), /invalid JSON/); });
 t('migrateEntry upgrades v1 rows', () => { const m = C.migrateEntry({ timestamp: '17/11/2026, 10:00:00', zone: 'D1', partNo: 'X', visibleCount: 4, hiddenOffset: 2, totalQty: 6, mrp: 10, totalValue: 60 }); assert.ok(m.id && m.syncStatus === 'pending' && m.totalQty === 6); assert.strictEqual(C.migrateEntry(m), m); });
 t('entriesToCsv has BOM, header, sanitised rows', () => { const csv = C.entriesToCsv([{ id: 'a', isoTime: 'z', zone: 'D1', partNo: '=cmd', description: 'x', barcode: '', mfgDate: '', visibleCount: 1, hiddenQty: 0, depthMult: 1, totalQty: 1, mrp: 1, totalValue: 1, syncStatus: 'synced' }]); assert.ok(csv.startsWith('﻿"ID"')); assert.ok(csv.includes(`"'=cmd"`)); });
+const E = [
+  { zone: 'D1', partNo: 'AB1', description: 'Air filter', barcode: 'X9', totalQty: 5, totalValue: 50, counted: true },
+  { zone: 'D10', partNo: 'AB2', description: 'Oil filter', barcode: '', totalQty: 3, totalValue: 30, counted: false },
+  { zone: 'D2', partNo: 'CD3', description: 'Brake pad', barcode: 'Z', totalQty: 2, totalValue: 20 }
+];
+t('filterEntries: text, zone, counted', () => {
+  assert.strictEqual(C.filterEntries(E, { q: 'filter' }).length, 2);
+  assert.strictEqual(C.filterEntries(E, { q: ' x9 ' }).length, 1);
+  assert.strictEqual(C.filterEntries(E, { zone: 'D2' }).length, 1);
+  assert.strictEqual(C.filterEntries(E, { counted: 'yes' }).length, 1);
+  assert.strictEqual(C.filterEntries(E, { counted: 'no' }).length, 2);
+  assert.strictEqual(C.filterEntries(E, {}).length, 3);
+});
+t('uniqueZones / groupByZone natural sort + subtotals', () => {
+  assert.deepStrictEqual(C.uniqueZones(E), ['D1', 'D2', 'D10']);
+  const g = C.groupByZone(E); assert.deepStrictEqual(g.map((x) => x.zone), ['D1', 'D2', 'D10']); assert.strictEqual(g[0].qty, 5); assert.strictEqual(g[2].value, 30);
+});
 console.log(`\n${n} tests passed`);

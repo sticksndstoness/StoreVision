@@ -20,6 +20,7 @@
   let aiCounted = false;       // true once AI produced the pins for the current photo
   let zoneManual = false;      // user typed the zone, so AI must not overwrite it
   let busy = { label: false, stack: false, sync: false };
+  const view = { q: '', zone: '', counted: '', group: false };
   let inventoryLog = loadLog();
 
   function loadLog() {
@@ -301,7 +302,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       description: $('descInput').value.trim(), barcode: $('barcodeInput').value.trim(), mfgDate: $('mfgInput').value.trim(),
       visibleCount: t.visible, hiddenQty: t.hidden, depthMult: t.mult,
       totalQty: t.totalQty, mrp: t.mrp, totalValue: t.totalValue,
-      aiCounted, edited: false, syncStatus: 'pending'
+      aiCounted, edited: false, counted: false, syncStatus: 'pending'
     };
     inventoryLog.unshift(entry);
     persistLog(); renderLog();
@@ -359,23 +360,12 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     pending: ['text-amber-300', 'fa-clock', 'Not synced'],
     failed: ['text-rose-400', 'fa-triangle-exclamation', 'Sync failed']
   };
-  function renderLog() {
-    $('logCount').textContent = inventoryLog.length;
-    const n = unsynced().length;
-    $('unsyncedCount').textContent = n;
-    $('retryAllBtn').classList.toggle('hidden', !(n && settings().url));
-    $('clearLogBtn').classList.toggle('hidden', !inventoryLog.length);
-    const container = $('logList');
-    if (!inventoryLog.length) {
-      container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No scans logged yet.</p>';
-      return;
-    }
+  function rowHtml(item) {
     const E = C.escapeHtml;
-    container.innerHTML = inventoryLog.map((item) => {
-      const st = STATUS[item.syncStatus] || STATUS.pending;
-      const when = new Date(item.isoTime).toLocaleString('en-IN');
-      return `
-      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2">
+    const st = STATUS[item.syncStatus] || STATUS.pending;
+    const when = new Date(item.isoTime).toLocaleString('en-IN');
+    return `
+      <div class="bg-slate-950 border ${item.counted ? 'border-emerald-500/40' : 'border-slate-800'} rounded-xl p-3 space-y-2">
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
@@ -390,16 +380,51 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
             <span class="block text-[10px] text-slate-400">${E(C.fmtInr(item.totalValue))}</span>
           </div>
         </div>
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
+          <label class="flex items-center gap-1.5 text-[11px] ${item.counted ? 'text-emerald-300' : 'text-slate-400'}">
+            <input type="checkbox" data-act="counted" data-id="${E(item.id)}" ${item.counted ? 'checked' : ''} class="accent-emerald-500 w-4 h-4" /> Verified
+          </label>
           <span class="text-[10px] ${st[0]}"><i class="fa-solid ${st[1]} mr-1" aria-hidden="true"></i>${st[2]}</span>
           <div class="flex gap-1.5">
-            ${item.syncStatus !== 'synced' ? `<button type="button" data-act="resync" data-id="${E(item.id)}" class="px-2.5 py-1.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-sky-300">Retry</button>` : ''}
+            ${item.syncStatus !== 'synced' && settings().url ? `<button type="button" data-act="resync" data-id="${E(item.id)}" class="px-2.5 py-1.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-sky-300">Retry</button>` : ''}
             <button type="button" data-act="edit" data-id="${E(item.id)}" class="px-2.5 py-1.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-slate-200">Edit qty</button>
             <button type="button" data-act="delete" data-id="${E(item.id)}" class="px-2.5 py-1.5 rounded bg-rose-500/10 border border-rose-500/30 text-[10px] text-rose-300">Delete</button>
           </div>
         </div>
       </div>`;
-    }).join('');
+  }
+
+  const visibleEntries = () => C.filterEntries(inventoryLog, view);
+
+  function renderLog() {
+    const E = C.escapeHtml;
+    $('logCount').textContent = inventoryLog.length;
+    const n = unsynced().length;
+    $('unsyncedCount').textContent = n;
+    $('retryAllBtn').classList.toggle('hidden', !(n && settings().url));
+    $('clearLogBtn').classList.toggle('hidden', !inventoryLog.length);
+
+    const sel = $('logZoneFilter');
+    const zones = C.uniqueZones(inventoryLog);
+    if (view.zone && !zones.includes(view.zone)) view.zone = '';
+    sel.innerHTML = '<option value="">All bays</option>' + zones.map((z) => `<option value="${E(z)}"${z === view.zone ? ' selected' : ''}>${E(z)}</option>`).join('');
+
+    const list = visibleEntries();
+    const filtered = !!(view.q || view.zone || view.counted);
+    const totQty = list.reduce((a, e) => a + (Number(e.totalQty) || 0), 0);
+    const totVal = list.reduce((a, e) => a + (Number(e.totalValue) || 0), 0);
+    $('logSummary').textContent = inventoryLog.length ? `Showing ${list.length} of ${inventoryLog.length} • ${totQty} pcs • ${C.fmtInr(totVal)}` : '';
+    $('csvLabel').textContent = filtered ? 'CSV (filtered)' : 'CSV';
+
+    const container = $('logList');
+    if (!inventoryLog.length) { container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No scans logged yet.</p>'; return; }
+    if (!list.length) { container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No entries match this filter.</p>'; return; }
+    if (!view.group) { container.innerHTML = list.map(rowHtml).join(''); return; }
+    container.innerHTML = C.groupByZone(list).map((g) => `
+      <div class="flex items-center justify-between sticky top-0 bg-slate-900 py-1.5 px-1 border-b border-slate-800">
+        <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[11px] font-bold">${E(g.zone)}</span>
+        <span class="text-[11px] text-slate-300">${g.entries.length} SKUs • <strong class="text-emerald-400">${g.qty} pcs</strong> • ${E(C.fmtInr(g.value))}</span>
+      </div>${g.entries.map(rowHtml).join('')}`).join('');
   }
 
   function onLogClick(ev) {
@@ -429,20 +454,22 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
 
   /* ---------- export / share ---------- */
   function exportCSV() {
-    if (!inventoryLog.length) return showToast('Nothing to export yet');
-    const blob = new Blob([C.entriesToCsv(inventoryLog)], { type: 'text/csv;charset=utf-8' });
+    const rows = visibleEntries();
+    if (!rows.length) return showToast('Nothing to export for this filter');
+    const blob = new Blob([C.entriesToCsv(rows)], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    a.href = url; a.download = `storevision_inventory_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.href = url; a.download = `storevision_${view.zone ? view.zone.replace(/[^A-Za-z0-9_-]/g, '') + '_' : ''}${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   async function copyWhatsAppSummary() {
-    if (!inventoryLog.length) return showToast('Nothing to share yet');
+    const rows = visibleEntries();
+    if (!rows.length) return showToast('Nothing to share for this filter');
     const MAX = 15;
-    const lines = inventoryLog.slice(0, MAX).map((r) => `• [${r.zone}] ${r.partNo}: *${r.totalQty} pcs* (${C.fmtInr(r.totalValue)})`);
-    if (inventoryLog.length > MAX) lines.push(`…and ${inventoryLog.length - MAX} more (see CSV)`);
+    const lines = rows.slice(0, MAX).map((r) => `• [${r.zone}] ${r.partNo}: *${r.totalQty} pcs* (${C.fmtInr(r.totalValue)})`);
+    if (rows.length > MAX) lines.push(`…and ${rows.length - MAX} more (see CSV)`);
     const text = `*StoreVision Inventory Count*\n${lines.join('\n')}`;
     try {
       if (navigator.share) { await navigator.share({ text }); return; }
@@ -474,6 +501,20 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('saveSyncBtn').addEventListener('click', saveAndSyncEntry);
 
     $('logList').addEventListener('click', onLogClick);
+    $('logList').addEventListener('change', (ev) => {
+      const cb = ev.target.closest('input[data-act="counted"]');
+      if (!cb) return;
+      const entry = inventoryLog.find((e) => e.id === cb.dataset.id);
+      if (!entry) return;
+      entry.counted = cb.checked; entry.syncStatus = 'pending';
+      persistLog(); renderLog();
+      if (settings().url) syncEntries([entry]);
+    });
+    let searchTimer;
+    $('logSearch').addEventListener('input', (e) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { view.q = e.target.value; renderLog(); }, 150); });
+    $('logZoneFilter').addEventListener('change', (e) => { view.zone = e.target.value; renderLog(); });
+    $('logCountedFilter').addEventListener('change', (e) => { view.counted = e.target.value; renderLog(); });
+    $('logGroupToggle').addEventListener('change', (e) => { view.group = e.target.checked; renderLog(); });
     $('exportCsvBtn').addEventListener('click', exportCSV);
     $('shareBtn').addEventListener('click', copyWhatsAppSummary);
     $('retryAllBtn').addEventListener('click', () => syncEntries(unsynced()));
