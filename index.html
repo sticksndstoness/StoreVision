@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>StoreVision Count — Smart Inventory</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .pin-dot {
+      transform: translate(-50%, -50%);
+      transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.85), 0 0 0 2px #0f172a;
+    }
+    .pin-dot:active { transform: translate(-50%, -50%) scale(1.25); }
+    .pin-manual { background: linear-gradient(135deg, #38bdf8, #0284c7); }
+    .pin-ai { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .scan-line {
+      position: absolute; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, transparent, #38bdf8, #f59e0b, transparent);
+      box-shadow: 0 0 12px #38bdf8;
+      animation: scanMove 1.8s ease-in-out infinite;
+    }
+    @keyframes scanMove {
+      0%, 100% { top: 6%; }
+      50% { top: 92%; }
+    }
+  </style>
+</head>
+<body class="min-h-screen pb-24">
+
+  <!-- Top Header -->
+  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+        <i class="fa-solid fa-boxes-stacked text-base"></i>
+      </div>
+      <div>
+        <h1 class="text-base font-bold tracking-tight text-white leading-tight">StoreVision Count</h1>
+        <p class="text-[11px] text-slate-400">Label OCR • Bay Auto-Detect • Sheet Sync</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="syncIndicator" class="hidden text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+        <i class="fa-solid fa-cloud-check mr-1"></i>Sheet Linked
+      </span>
+      <button onclick="openSettings()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+        <i class="fa-solid fa-gear"></i> Setup
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
+
+    <!-- STEP 1: SCAN ITEM LABEL / BARCODE -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-6 h-6 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-400 text-xs font-bold flex items-center justify-center">1</span>
+          <h2 class="text-sm font-bold text-white">Scan Item Label / Barcode</h2>
+        </div>
+        <label class="cursor-pointer px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow">
+          <i class="fa-solid fa-barcode"></i> Scan Label
+          <input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleLabelUpload(event)" />
+        </label>
+      </div>
+
+      <div id="labelPreviewWrap" class="hidden relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950 max-h-40 flex items-center justify-center">
+        <img id="labelPreviewImg" class="max-h-40 object-contain" alt="Label preview" />
+        <div id="labelScanningOverlay" class="hidden absolute inset-0 bg-slate-950/75 flex flex-col items-center justify-center gap-2">
+          <div class="scan-line"></div>
+          <span class="text-xs font-semibold text-sky-300"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Reading Part No, Barcode & MRP...</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2.5">
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Part No / SKU</label>
+          <input id="partNoInput" type="text" placeholder="e.g. P5105384" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs font-semibold text-white focus:border-sky-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Barcode / Serial</label>
+          <input id="barcodeInput" type="text" placeholder="e.g. CBL0NL0231" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs font-mono text-slate-200 focus:border-sky-500 focus:outline-none" />
+        </div>
+        <div class="col-span-2">
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Item Description</label>
+          <input id="descInput" type="text" placeholder="e.g. AIR FILTER KIT - ICV-H4 BS6/BS4/BS3" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-sky-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">MRP (₹ per unit)</label>
+          <input id="mrpInput" type="number" step="0.01" placeholder="4110.00" oninput="recalculateTotals()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs font-semibold text-emerald-400 focus:border-sky-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Mfg Date</label>
+          <input id="mfgInput" type="text" placeholder="e.g. 08/2026" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none" />
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2: SNAP RACK / STACK & COUNT -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 text-xs font-bold flex items-center justify-center">2</span>
+          <h2 class="text-sm font-bold text-white">Snap Rack / Stack & Count</h2>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <label class="cursor-pointer px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow">
+            <i class="fa-solid fa-camera"></i> Snap Stack
+            <input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleStackUpload(event)" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Bay / Zone & ROI Controls -->
+      <div class="grid grid-cols-2 gap-2.5">
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Rack / Bay Tag (Auto-Read)</label>
+          <input id="zoneInput" type="text" placeholder="e.g. D1, D2, ZONE-A1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs font-bold text-amber-300 focus:border-amber-500 focus:outline-none" />
+        </div>
+        <div class="flex flex-col justify-end">
+          <label class="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 cursor-pointer">
+            <input id="roiToggle" type="checkbox" checked class="accent-amber-500 w-4 h-4" />
+            <span class="text-[11px] text-slate-300 font-medium">Focus Center Rack Only</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Interactive Canvas Image Area -->
+      <div id="stackContainer" class="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950 min-h-[220px] flex items-center justify-center select-none">
+        <div id="stackPlaceholder" class="text-center p-6 space-y-2">
+          <i class="fa-solid fa-camera-retro text-3xl text-slate-600"></i>
+          <p class="text-xs text-slate-400">Tap <strong class="text-amber-400">Snap Stack</strong> to photograph your rack or pallet.<br/>AI detects bay labels (D1/D2) and plots numbered pins.</p>
+        </div>
+        <img id="stackImg" class="hidden w-full h-auto block cursor-crosshair" alt="Warehouse stack" onclick="addManualPin(event)" />
+        <div id="pinsLayer" class="absolute inset-0 pointer-events-none"></div>
+        <div id="stackScanningOverlay" class="hidden absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center gap-2 z-20">
+          <div class="scan-line"></div>
+          <span class="text-xs font-bold text-amber-300"><i class="fa-solid fa-microchip mr-1"></i>Counting stacked units & reading bay tag...</span>
+        </div>
+      </div>
+
+      <!-- Pin Action Bar -->
+      <div id="pinControls" class="hidden flex items-center justify-between text-[11px] bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
+        <span class="text-slate-400"><i class="fa-solid fa-hand-pointer text-sky-400 mr-1"></i>Tap photo to add pin • Tap pin to remove</span>
+        <div class="flex items-center gap-2">
+          <button onclick="recountWithAI()" class="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold">
+            <i class="fa-solid fa-rotate mr-1"></i>Re-Count AI
+          </button>
+          <button onclick="clearPins()" class="px-2.5 py-1 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
+            Clear
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: HIDDEN DEPTH & TOTAL VALUATION -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+      <div class="flex items-center gap-2">
+        <span class="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold flex items-center justify-center">3</span>
+        <h2 class="text-sm font-bold text-white">Hidden Back-Row Depth & Valuation</h2>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-center">
+          <span class="block text-[10px] text-slate-400 uppercase">Visible Pins</span>
+          <span id="visibleCountDisplay" class="text-xl font-extrabold text-amber-400">0</span>
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 text-center">
+          <label class="block text-[10px] text-slate-400 uppercase mb-1">Hidden +Qty</label>
+          <input id="hiddenOffsetInput" type="number" value="0" oninput="recalculateTotals()" class="w-full bg-slate-900 border border-slate-700 rounded text-center text-sm font-bold text-white py-1 focus:border-emerald-500 focus:outline-none" />
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 text-center">
+          <label class="block text-[10px] text-slate-400 uppercase mb-1">Depth ×Mult</label>
+          <select id="depthMultSelect" onchange="recalculateTotals()" class="w-full bg-slate-900 border border-slate-700 rounded text-center text-sm font-bold text-white py-1 focus:border-emerald-500 focus:outline-none">
+            <option value="1">×1 (Front)</option>
+            <option value="2">×2 Rows</option>
+            <option value="3">×3 Rows</option>
+            <option value="4">×4 Rows</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between bg-slate-950 border border-emerald-500/30 rounded-xl px-4 py-3">
+        <div>
+          <span class="block text-[10px] uppercase tracking-wider text-slate-400">Total Stock Qty</span>
+          <span id="totalQtyDisplay" class="text-2xl font-black text-white">0 <span class="text-xs font-normal text-slate-400">units</span></span>
+        </div>
+        <div class="text-right">
+          <span class="block text-[10px] uppercase tracking-wider text-slate-400">Est. Stock Value</span>
+          <span id="totalValueDisplay" class="text-lg font-extrabold text-emerald-400">₹0</span>
+        </div>
+      </div>
+
+      <button id="saveSyncBtn" onclick="saveAndSyncEntry()" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition">
+        <i class="fa-solid fa-cloud-arrow-up"></i> Save & Sync to Google Sheet
+      </button>
+    </section>
+
+    <!-- INVENTORY LOG -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-white"><i class="fa-solid fa-clipboard-list text-amber-400 mr-1.5"></i>Session Inventory Log (<span id="logCount">0</span>)</h3>
+        <div class="flex items-center gap-1.5">
+          <button onclick="exportCSV()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700">
+            <i class="fa-solid fa-file-csv mr-1 text-emerald-400"></i>CSV
+          </button>
+          <button onclick="copyWhatsAppSummary()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700">
+            <i class="fa-brands fa-whatsapp mr-1 text-green-400"></i>Share
+          </button>
+        </div>
+      </div>
+      <div id="logList" class="space-y-2 max-h-64 overflow-y-auto">
+        <p class="text-xs text-slate-500 text-center py-4">No scans logged yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white"><i class="fa-solid fa-sliders text-amber-400 mr-2"></i>App & Cloud Setup</h3>
+        <button onclick="closeSettings()" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Gemini API Key (Required for AI Vision)</label>
+          <input id="apiKeyInput" type="password" placeholder="AIzaSy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none" />
+          <p class="text-[10px] text-slate-400 mt-1">Get free key at <span class="text-sky-400">aistudio.google.com/api-keys</span>. Stored locally on this phone.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Google Apps Script Web App URL (Auto-Sync)</label>
+          <input id="webhookUrlInput" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-emerald-500 focus:outline-none" />
+          <p class="text-[10px] text-slate-400 mt-1">Automatically updates your Google Drive inventory sheet on every save.</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeSettings()" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-semibold text-slate-300">Cancel</button>
+        <button onclick="saveSettings()" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-800 border border-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-xl"></div>
+
+  <script>
+    let pins = [];
+    let currentStackBase64 = null;
+    let inventoryLog = JSON.parse(localStorage.getItem('sv_inventory_log') || '[]');
+
+    window.addEventListener('DOMContentLoaded', () => {
+      updateSyncBadge();
+      renderLog();
+      if (!localStorage.getItem('sv_gemini_key')) {
+        setTimeout(() => showToast('Tap ⚙️ Setup to enter your Gemini API Key'), 800);
+      }
+    });
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => t.classList.add('hidden'), 3200);
+    }
+
+    function openSettings() {
+      document.getElementById('apiKeyInput').value = localStorage.getItem('sv_gemini_key') || '';
+      document.getElementById('webhookUrlInput').value = localStorage.getItem('sv_webhook_url') || '';
+      document.getElementById('settingsModal').classList.remove('hidden');
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsModal').classList.add('hidden');
+    }
+
+    function saveSettings() {
+      const key = document.getElementById('apiKeyInput').value.trim();
+      const url = document.getElementById('webhookUrlInput').value.trim();
+      localStorage.setItem('sv_gemini_key', key);
+      localStorage.setItem('sv_webhook_url', url);
+      updateSyncBadge();
+      closeSettings();
+      showToast('Settings saved on device');
+    }
+
+    function updateSyncBadge() {
+      const url = localStorage.getItem('sv_webhook_url');
+      document.getElementById('syncIndicator').classList.toggle('hidden', !url);
+    }
+
+    function compressImage(file, maxDim = 1280) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            let w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+              if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+              else { w = Math.round(w * maxDim / h); h = maxDim; }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            resolve({ dataUrl, base64: dataUrl.split(',')[1] });
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function callGeminiVision(base64Image, promptText) {
+      const apiKey = localStorage.getItem('sv_gemini_key');
+      if (!apiKey) {
+        openSettings();
+        throw new Error('Please enter your Gemini API Key in Setup first.');
+      }
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: promptText },
+              { inline_data: { mime_type: 'image/jpeg', data: base64Image } }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json'
+          }
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `API Error (${res.status})`);
+      }
+      const json = await res.json();
+      const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      return JSON.parse(rawText);
+    }
+
+    async function handleLabelUpload(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const { dataUrl, base64 } = await compressImage(file, 1024);
+      document.getElementById('labelPreviewWrap').classList.remove('hidden');
+      document.getElementById('labelPreviewImg').src = dataUrl;
+      document.getElementById('labelScanningOverlay').classList.remove('hidden');
+
+      try {
+        const prompt = `Extract spare part or product label details from this image. Return strict JSON:
+        {
+          "partNo": "part number or SKU code if visible, else empty string",
+          "description": "item description or commodity name",
+          "barcode": "barcode text or serial number",
+          "mrp": numeric MRP price without currency symbol (e.g. 4110.00, or 0 if not found),
+          "mfgDate": "manufacturing date e.g. 08/2026"
+        }`;
+        const data = await callGeminiVision(base64, prompt);
+        if (data.partNo) document.getElementById('partNoInput').value = data.partNo;
+        if (data.description) document.getElementById('descInput').value = data.description;
+        if (data.barcode) document.getElementById('barcodeInput').value = data.barcode;
+        if (data.mrp) document.getElementById('mrpInput').value = data.mrp;
+        if (data.mfgDate) document.getElementById('mfgInput').value = data.mfgDate;
+        recalculateTotals();
+        showToast('Label details extracted!');
+      } catch (err) {
+        showToast(err.message);
+      } finally {
+        document.getElementById('labelScanningOverlay').classList.add('hidden');
+      }
+    }
+
+    async function handleStackUpload(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const { dataUrl, base64 } = await compressImage(file, 1280);
+      currentStackBase64 = base64;
+
+      const imgEl = document.getElementById('stackImg');
+      imgEl.src = dataUrl;
+      imgEl.classList.remove('hidden');
+      document.getElementById('stackPlaceholder').classList.add('hidden');
+      document.getElementById('pinControls').classList.remove('hidden');
+      await recountWithAI();
+    }
+
+    async function recountWithAI() {
+      if (!currentStackBase64) return;
+      document.getElementById('stackScanningOverlay').classList.remove('hidden');
+      const focusCenter = document.getElementById('roiToggle').checked;
+      try {
+        const prompt = `You are a warehouse inventory vision counter.
+        1. Read any rack bay label or zone sticker visible on the shelving uprights (e.g., D1, D2, A1, ZONE-1).
+        2. Detect every individual stacked box, carton, bucket, or product unit ${focusCenter ? 'in the primary foreground/center rack or stack (ignore distant background aisles and loose floor debris)' : 'visible in the image'}.
+        Return strict JSON:
+        {
+          "bayTag": "detected bay tag or empty string",
+          "items": [
+            { "x": normalized_center_x_0_to_1000, "y": normalized_center_y_0_to_1000 }
+          ]
+        }`;
+        const result = await callGeminiVision(currentStackBase64, prompt);
+        if (result.bayTag && !document.getElementById('zoneInput').value) {
+          document.getElementById('zoneInput').value = result.bayTag;
+        }
+        pins = (result.items || []).map(pt => ({
+          x: Math.max(2, Math.min(98, pt.x / 10)),
+          y: Math.max(2, Math.min(98, pt.y / 10)),
+          source: 'ai'
+        }));
+        renderPins();
+        showToast(`Detected ${pins.length} visible units`);
+      } catch (err) {
+        showToast(err.message);
+      } finally {
+        document.getElementById('stackScanningOverlay').classList.add('hidden');
+      }
+    }
+
+    function addManualPin(event) {
+      const img = document.getElementById('stackImg');
+      const rect = img.getBoundingClientRect();
+      const xPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const yPct = ((event.clientY - rect.top) / rect.height) * 100;
+      pins.push({ x: xPct, y: yPct, source: 'manual' });
+      renderPins();
+    }
+
+    function removePin(index, event) {
+      event.stopPropagation();
+      pins.splice(index, 1);
+      renderPins();
+    }
+
+    function clearPins() {
+      pins = [];
+      renderPins();
+    }
+
+    function renderPins() {
+      const layer = document.getElementById('pinsLayer');
+      layer.innerHTML = '';
+      pins.forEach((pin, idx) => {
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = `pin-dot pointer-events-auto absolute w-5 h-5 rounded-full text-[10px] font-extrabold text-white flex items-center justify-center ${pin.source === 'manual' ? 'pin-manual' : 'pin-ai'}`;
+        dot.style.left = `${pin.x}%`;
+        dot.style.top = `${pin.y}%`;
+        dot.textContent = idx + 1;
+        dot.onclick = (e) => removePin(idx, e);
+        layer.appendChild(dot);
+      });
+      recalculateTotals();
+    }
+
+    function recalculateTotals() {
+      const visible = pins.length;
+      const hidden = parseInt(document.getElementById('hiddenOffsetInput').value || '0', 10) || 0;
+      const mult = parseInt(document.getElementById('depthMultSelect').value || '1', 10) || 1;
+      const mrp = parseFloat(document.getElementById('mrpInput').value || '0') || 0;
+
+      const totalQty = (visible * mult) + hidden;
+      const totalVal = totalQty * mrp;
+
+      document.getElementById('visibleCountDisplay').textContent = visible;
+      document.getElementById('totalQtyDisplay').innerHTML = `${totalQty} <span class="text-xs font-normal text-slate-400">units</span>`;
+      document.getElementById('totalValueDisplay').textContent = '₹' + totalVal.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+    }
+
+    async function saveAndSyncEntry() {
+      const visible = pins.length;
+      const hidden = parseInt(document.getElementById('hiddenOffsetInput').value || '0', 10) || 0;
+      const mult = parseInt(document.getElementById('depthMultSelect').value || '1', 10) || 1;
+      const totalQty = (visible * mult) + hidden;
+      const mrp = parseFloat(document.getElementById('mrpInput').value || '0') || 0;
+
+      const entry = {
+        timestamp: new Date().toLocaleString('en-IN'),
+        zone: document.getElementById('zoneInput').value.trim() || 'UNASSIGNED',
+        partNo: document.getElementById('partNoInput').value.trim() || 'UNKNOWN-SKU',
+        description: document.getElementById('descInput').value.trim(),
+        barcode: document.getElementById('barcodeInput').value.trim(),
+        mfgDate: document.getElementById('mfgInput').value.trim(),
+        visibleCount: visible,
+        hiddenOffset: hidden + (visible * (mult - 1)),
+        totalQty: totalQty,
+        mrp: mrp,
+        totalValue: totalQty * mrp
+      };
+
+      inventoryLog.unshift(entry);
+      localStorage.setItem('sv_inventory_log', JSON.stringify(inventoryLog));
+      renderLog();
+
+      const webhookUrl = localStorage.getItem('sv_webhook_url');
+      if (!webhookUrl) {
+        showToast('Saved locally! Add Sheet URL in Setup for cloud sync.');
+        return;
+      }
+
+      const btn = document.getElementById('saveSyncBtn');
+      const origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing to Google Sheet...';
+
+      try {
+        await fetch(webhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(entry)
+        });
+        showToast(`Synced ${entry.partNo} (${entry.totalQty} units) to Sheet!`);
+      } catch (err) {
+        showToast('Saved locally, but Sheet sync failed.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
+    }
+
+    function renderLog() {
+      document.getElementById('logCount').textContent = inventoryLog.length;
+      const container = document.getElementById('logList');
+      if (!inventoryLog.length) {
+        container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No scans logged yet.</p>';
+        return;
+      }
+      container.innerHTML = inventoryLog.map((item, i) => `
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">${item.zone}</span>
+              <span class="text-xs font-bold text-white truncate">${item.partNo}</span>
+            </div>
+            <p class="text-[11px] text-slate-400 truncate mt-0.5">${item.description || 'No description'}</p>
+            <p class="text-[10px] text-slate-500">${item.timestamp}</p>
+          </div>
+          <div class="text-right shrink-0">
+            <span class="block text-sm font-black text-emerald-400">${item.totalQty} pcs</span>
+            <span class="block text-[10px] text-slate-400">₹${Number(item.totalValue || 0).toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function exportCSV() {
+      if (!inventoryLog.length) return showToast('Nothing to export yet');
+      const headers = ['Timestamp','Bay/Zone','Part No','Description','Barcode','Mfg Date','Visible','Hidden','Total Qty','MRP','Total Value'];
+      const rows = inventoryLog.map(r => [
+        `"${r.timestamp}"`, `"${r.zone}"`, `"${r.partNo}"`, `"${(r.description||'').replace(/"/g,'""')}"`,
+        `"${r.barcode}"`, `"${r.mfgDate}"`, r.visibleCount, r.hiddenOffset, r.totalQty, r.mrp, r.totalValue
+      ].join(','));
+      const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `storevision_inventory_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+
+    function copyWhatsAppSummary() {
+      if (!inventoryLog.length) return showToast('Nothing to share yet');
+      const lines = inventoryLog.slice(0, 15).map(r => `• [${r.zone}] ${r.partNo}: *${r.totalQty} pcs* (₹${Number(r.totalValue||0).toLocaleString('en-IN')})`);
+      const text = `*StoreVision Inventory Count*\n${lines.join('\n')}`;
+      navigator.clipboard.writeText(text);
+      showToast('WhatsApp summary copied!');
+    }
+  </script>
+</body>
+</html>
