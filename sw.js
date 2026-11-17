@@ -1,5 +1,5 @@
 // App-shell cache so the UI loads offline. API calls (Gemini / Apps Script) are never cached.
-const CACHE = 'storevision-v2';
+const CACHE = 'storevision-v3';
 const SHELL = ['./', './index.html', './css/style.css', './js/app.js', './js/core.js', './manifest.webmanifest', './icons/icon.svg'];
 const CDN_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com'];
 
@@ -15,6 +15,13 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   const sameOrigin = url.origin === location.origin;
   if (!sameOrigin && !CDN_HOSTS.includes(url.hostname)) return; // never touch API traffic
+  if (sameOrigin) { // network-first: new deployments are picked up on the next load, cache only as offline fallback
+    e.respondWith(fetch(req).then((res) => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html'))));
+    return;
+  }
   e.respondWith(
     caches.match(req).then((hit) => {
       const net = fetch(req).then((res) => {
