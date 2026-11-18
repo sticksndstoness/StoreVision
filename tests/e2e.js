@@ -81,6 +81,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
   await page.click('#toastAction'); ok((await page.textContent('#logCount')) === before, 'delete undo works');
 
   // corrupted legacy storage must neither brick the app nor touch data already in the database
+  await page.evaluate(() => SVDB.loadEntries());   // queued behind any pending write, so the previous Undo is committed before we reload
   const keep = await page.textContent('#logCount');
   await page.evaluate(() => localStorage.setItem('sv_inventory_log', '{not json'));
   await page.reload(); await page.waitForFunction(READY);
