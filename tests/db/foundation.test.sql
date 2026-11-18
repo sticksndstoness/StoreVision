@@ -165,4 +165,14 @@ select t.allowed(:'O', format($q$update public.profiles set active = false where
 select t.check(t.count_as(:'O2', 'select 1 from public.branches') = 0, 'a deactivated owner has no powers left');
 select t.denied(:'A', 'select public.bootstrap_owner(''a@b.c'', ''x'')', 'logged-in users cannot call bootstrap_owner');
 
+
+-- ------------------------------------------------------------------ profile email (migration 3)
+select t.check((select email from public.profiles where user_id = :'O') = 'ua1@example.test', 'bootstrap_owner stores the owner login email');
+select t.denied(:'O', format($q$update public.profiles set email = 'x@y.z' where user_id = %L$q$, :'A'), 'the app can never write an email (server only)');
+do $$ begin
+  begin update public.profiles set email = 'UA1@example.test' where user_id = '00000000-0000-0000-0000-0000000000a2'; raise exception 'FAIL - duplicate email accepted (case-insensitive)';
+  exception when unique_violation then perform t.pass('the same email cannot belong to two profiles (case-insensitive)'); end;
+end $$;
+select t.check(t.count_as(:'C1', 'select 1 from public.profiles where email is not null') <= 1, 'a counter can only ever see their own email, not colleagues');
+
 select 'ALL DONE' as result;

@@ -12,6 +12,8 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 | `js/core.js` | Pure logic (totals, validation, change tracking, backups, CSV) — unit tested |
 | `js/db.js` | Storage: IndexedDB, audit log, drafts, crash log, backup/restore |
 | `js/app.js` | DOM, Gemini calls, sync |
+| `js/cloud.js`, `js/team.js`, `js/config.js` | Sign-in, Team and Branches screens (Supabase). Public key only in `config.js` |
+| `supabase/` | Database migrations (RLS) and the `team-admin` Edge Function. `tools/` builds the single-file function (`npm run build:fn`) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Installable PWA + offline app shell |
 | `apps-script/Code.gs` | Google Sheet backend + optional Gemini proxy |
 | `tests/` | `npm test` (unit) and `npm run test:browser` (Playwright, mocked network). CI: `.github/workflows/test.yml` |
