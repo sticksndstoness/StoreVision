@@ -4,6 +4,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const srv = http.createServer((q, r) => { let f = path.join(root, q.url.split('?')[0] === '/' ? 'index.html' : q.url.split('?')[0]); fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); return r.end(); } r.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' }); r.end(d); }); });
+const READY = () => document.documentElement.dataset.ready === '1';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails++; };
 
 (async () => {
@@ -26,9 +27,9 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
   await page.route('https://script.google.com/**', (r) => syncMode === 'ok' ? r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true}' })
     : r.fulfill({ status: 500, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: 'boom' }));
 
-  await page.goto(base);
+  await page.goto(base); await page.waitForFunction(READY);
   await page.evaluate(() => { localStorage.setItem('sv_gemini_key', 'KEY123'); localStorage.setItem('sv_webhook_url', 'https://script.google.com/macros/s/x/exec'); localStorage.setItem('sv_webhook_token', 'tok'); });
-  await page.reload();
+  await page.reload(); await page.waitForFunction(READY);
 
   // make a tiny jpeg
   const png = path.join(require('os').tmpdir(), 'sv_t.png');
@@ -39,6 +40,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
   ok(geminiHeaders['x-goog-api-key'] === 'KEY123' && !geminiUrl.includes('KEY123'), 'API key sent in header, not URL');
   ok(geminiUrl.includes('models/gemini-3.8-flash:'), 'default model is gemini-3.8-flash (retired 2.5 value ignored)');
   ok((await page.inputValue('#mrpInput')) === '100' && (await page.inputValue('#descInput')) === 'AIR FILTER' && (await page.inputValue('#mfgInput')) === '08/2026', 'label fields filled from AI');
+  await page.waitForTimeout(1100); // the AI rate guard needs >=1s between calls
   await page.setInputFiles('#stackGallery', png);
   await page.waitForFunction(() => document.querySelectorAll('#pinsLayer button').length > 0);
   ok((await page.locator('#pinsLayer button').count()) === 3, 'invalid AI pin dropped (3 of 4 kept)');
@@ -78,9 +80,13 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
   ok((await page.textContent('#logCount')) === String(before - 1), 'delete works');
   await page.click('#toastAction'); ok((await page.textContent('#logCount')) === before, 'delete undo works');
 
-  // corrupted storage doesn't brick the app
+  // corrupted legacy storage must neither brick the app nor touch data already in the database
+  await page.evaluate(() => SVDB.loadEntries());   // queued behind any pending write, so the previous Undo is committed before we reload
+  const keep = await page.textContent('#logCount');
   await page.evaluate(() => localStorage.setItem('sv_inventory_log', '{not json'));
-  await page.reload(); ok((await page.textContent('#logCount')) === '0', 'corrupt storage handled');
+  await page.reload(); await page.waitForFunction(READY);
+  ok((await page.textContent('#logCount')) === keep && Number(keep) > 0, 'corrupt legacy key ignored; ' + keep + ' saved entries still there');
+  ok((await page.evaluate(() => localStorage.getItem('sv_inventory_log_corrupt'))) === '{not json', 'corrupt copy quarantined, not deleted');
 
   ok(errors.length === 0, 'no page errors ' + errors.join('|'));
   await browser.close(); srv.close(); process.exit(fails ? 1 : 0);

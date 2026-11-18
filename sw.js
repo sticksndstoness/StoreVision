@@ -1,10 +1,16 @@
-// App-shell cache so the UI loads offline. API calls (Gemini / Apps Script) are never cached.
-const CACHE = 'storevision-v3';
-const SHELL = ['./', './index.html', './css/style.css', './js/app.js', './js/core.js', './manifest.webmanifest', './icons/icon.svg'];
-const CDN_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com'];
+// Offline app shell. Everything is same-origin now (no CDNs). API calls (Gemini / Apps Script) are never cached.
+// Same-origin files are network-first, so a new deployment is picked up on the next load; the cache is the offline fallback.
+const CACHE = 'storevision-v4';
+const SHELL = [
+  './', './index.html', './manifest.webmanifest', './icons/icon.svg',
+  './css/tailwind.css', './css/style.css', './vendor/fontawesome/css/all.min.css',
+  './vendor/fontawesome/webfonts/fa-solid-900.woff2', './vendor/fontawesome/webfonts/fa-brands-400.woff2',
+  './js/core.js', './js/db.js', './js/app.js'
+];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // add files one by one: a single missing file must not make the whole install fail
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.allSettled(SHELL.map((u) => c.add(u)))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
@@ -12,23 +18,11 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  const url = new URL(req.url);
-  const sameOrigin = url.origin === location.origin;
-  if (!sameOrigin && !CDN_HOSTS.includes(url.hostname)) return; // never touch API traffic
-  if (sameOrigin) { // network-first: new deployments are picked up on the next load, cache only as offline fallback
-    e.respondWith(fetch(req).then((res) => {
-      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
-      return res;
-    }).catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html'))));
-    return;
-  }
+  if (new URL(req.url).origin !== location.origin) return;   // never touch API traffic
   e.respondWith(
-    caches.match(req).then((hit) => {
-      const net = fetch(req).then((res) => {
-        if (res && (res.ok || res.type === 'opaque')) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    })
+    fetch(req).then((res) => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
+      return res;
+    }).catch(() => caches.match(req).then((hit) => hit || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
   );
 });

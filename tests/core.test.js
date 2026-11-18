@@ -51,4 +51,43 @@ t('parseModelList keeps generateContent models, drops embeddings/tts, flash firs
   assert.deepStrictEqual(r.map((m) => m.id), ['gemini-3.8-flash', 'gemini-3.1-pro', 'gemini-3.5-flash-lite']);
   assert.deepStrictEqual(C.parseModelList(null), []);
 });
+t('sanitizeEntry coerces junk and never throws', () => {
+  assert.strictEqual(C.sanitizeEntry(null), null); assert.strictEqual(C.sanitizeEntry('x'), null); assert.strictEqual(C.sanitizeEntry([1]), null);
+  const e = C.sanitizeEntry({ id: 'a', isoTime: 'not-a-date', zone: '', partNo: 5, totalQty: '-3', mrp: 'abc', syncStatus: 'weird', counted: 1, depthMult: 0 });
+  assert.strictEqual(e.zone, 'UNASSIGNED'); assert.strictEqual(e.partNo, '5'); assert.strictEqual(e.totalQty, 0); assert.strictEqual(e.mrp, 0);
+  assert.strictEqual(e.syncStatus, 'pending'); assert.strictEqual(e.counted, true); assert.strictEqual(e.depthMult, 1); assert.ok(!isNaN(Date.parse(e.isoTime)));
+  assert.strictEqual(C.sanitizeEntry({ id: 'x'.repeat(500), description: 'd'.repeat(9999) }).description.length, 300);
+});
+t('sanitizeEntries drops bad rows and duplicate ids', () => {
+  const r = C.sanitizeEntries([{ id: 'a', partNo: 'A' }, null, { id: 'a', partNo: 'dup' }, 7, { id: 'b', partNo: 'B' }]);
+  assert.deepStrictEqual(r.entries.map((x) => x.id), ['a', 'b']); assert.strictEqual(r.dropped, 3); assert.deepStrictEqual(C.sanitizeEntries('nope'), { entries: [], dropped: 0 });
+});
+t('diffEntries: create / update / delete with audit snapshots', () => {
+  const a = C.sanitizeEntry({ id: 'a', partNo: 'A', totalQty: 1 }), b = C.sanitizeEntry({ id: 'b', partNo: 'B', totalQty: 2 });
+  const prev = new Map([[a.id, JSON.stringify(a)], [b.id, JSON.stringify(b)]]);
+  const a2 = { ...a, totalQty: 9 }, c = C.sanitizeEntry({ id: 'c', partNo: 'C' });
+  const d = C.diffEntries(prev, [a2, c], '2026-01-01T00:00:00.000Z');
+  assert.deepStrictEqual(d.puts.map((x) => x.id), ['a', 'c']); assert.deepStrictEqual(d.deletes, ['b']);
+  const ev = Object.fromEntries(d.events.map((e) => [e.entryId, e]));
+  assert.strictEqual(ev.a.type, 'update'); assert.strictEqual(ev.a.before.totalQty, 1); assert.strictEqual(ev.a.after.totalQty, 9);
+  assert.strictEqual(ev.b.type, 'delete'); assert.strictEqual(ev.b.before.partNo, 'B'); assert.strictEqual(ev.c.type, 'create');
+  assert.deepStrictEqual(C.diffEntries(new Map([[a.id, JSON.stringify(a)]]), [a]).puts, []);
+});
+t('backup roundtrip, validation, merge never overwrites', () => {
+  const a = C.sanitizeEntry({ id: 'a', partNo: 'A' }), b = C.sanitizeEntry({ id: 'b', partNo: 'B' });
+  const bk = C.makeBackup([a, b], [{ type: 'create' }]); const p = C.parseBackup(JSON.parse(JSON.stringify(bk)));
+  assert.ok(p.ok && p.entries.length === 2 && p.dropped === 0);
+  assert.strictEqual(C.parseBackup({ format: 'other' }).ok, false); assert.strictEqual(C.parseBackup(null).ok, false);
+  assert.strictEqual(C.parseBackup({ format: C.BACKUP_FORMAT, version: 99, entries: [] }).ok, false);
+  assert.strictEqual(C.parseBackup({ format: C.BACKUP_FORMAT, version: 1 }).ok, false);
+  const m = C.mergeBackup([{ ...a, totalQty: 5 }], p.entries); assert.deepStrictEqual(m.add.map((x) => x.id), ['b']); assert.strictEqual(m.skipped, 1);
+});
+t('crash record is bounded; AI allowance gap + cap', () => {
+  const r = C.makeCrashRecord('error', { message: 'm'.repeat(5000), stack: 's'.repeat(9000) }, 'x'); assert.ok(r.message.length <= 500 && r.stack.length <= 2000);
+  assert.strictEqual(C.makeCrashRecord('e', 'plain string').message, 'plain string');
+  assert.strictEqual(C.aiAllowance({ lastAt: 1000, now: 1500, countToday: 1, minGapMs: 1500, dailyCap: 5 }).ok, false);
+  assert.strictEqual(C.aiAllowance({ lastAt: 1000, now: 3000, countToday: 1, minGapMs: 1500, dailyCap: 5 }).ok, true);
+  assert.strictEqual(C.aiAllowance({ lastAt: 0, now: 9e9, countToday: 5, minGapMs: 1, dailyCap: 5 }).ok, false);
+  assert.ok(C.daysSince('2020-01-01', Date.parse('2020-01-08')) === 7 && C.daysSince('garbage') === Infinity);
+});
 console.log(`\n${n} tests passed`);
