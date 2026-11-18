@@ -4,6 +4,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const srv = http.createServer((q, r) => { const f = path.join(root, q.url.split('?')[0] === '/' ? 'index.html' : q.url.split('?')[0]); fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); return r.end(); } r.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' }); r.end(d); }); });
+const READY = () => document.documentElement.dataset.ready === '1';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails++; };
 (async () => {
   await new Promise((r) => srv.listen(0, r));
@@ -15,9 +16,9 @@ let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' 
     { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3.1-pro', supportedGenerationMethods: ['generateContent'] },
     { name: 'models/gemini-3.5-flash-lite', supportedGenerationMethods: ['generateContent'] }, { name: 'models/embed-1', supportedGenerationMethods: ['embedContent'] }] }) }); });
   await p.route('**/generativelanguage.googleapis.com/v1beta/models/*:generateContent', (r) => { genUrl = r.request().url(); r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"partNo":"P1","description":"d","barcode":"","mrp":0,"mfgDate":""}' }] } }] }) }); });
-  await p.goto('http://localhost:' + srv.address().port + '/');
+  await p.goto('http://localhost:' + srv.address().port + '/'); await p.waitForFunction(READY);
   await p.evaluate(() => localStorage.setItem('sv_model', 'gemini-2.5-flash')); // retired value from older version
-  await p.reload();
+  await p.reload(); await p.waitForFunction(READY);
   await p.click('#openSettingsBtn');
   ok((await p.inputValue('#modelSelect')) === 'gemini-3.8-flash', 'retired stored model -> default selected');
   ok((await p.locator('#modelSelect option').allTextContents()).some((t) => t.includes('(default)')), 'default model is labelled');

@@ -7,12 +7,14 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 ## Files
 | Path | Purpose |
 |---|---|
-| `index.html`, `css/style.css` | UI |
-| `js/core.js` | Pure logic (totals, validation, CSV, escaping) — unit tested |
-| `js/app.js` | DOM, Gemini calls, storage, sync |
+| `index.html`, `css/style.css`, `css/tailwind.css` | UI. `tailwind.css` is **generated** — run `npm run build:css` after changing classes in `index.html` / `js/` and commit the result |
+| `vendor/fontawesome/` | Self-hosted icons (no CDN) |
+| `js/core.js` | Pure logic (totals, validation, change tracking, backups, CSV) — unit tested |
+| `js/db.js` | Storage: IndexedDB, audit log, drafts, crash log, backup/restore |
+| `js/app.js` | DOM, Gemini calls, sync |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Installable PWA + offline app shell |
 | `apps-script/Code.gs` | Google Sheet backend + optional Gemini proxy |
-| `tests/` | `npm test` (unit), `npm run test:e2e` (Playwright, mocked network) |
+| `tests/` | `npm test` (unit) and `npm run test:browser` (Playwright, mocked network). CI: `.github/workflows/test.yml` |
 
 ## Setup
 1. **Sheet backend:** follow the header comment in `apps-script/Code.gs` (set `TOKEN`, deploy as Web App). 
@@ -22,6 +24,15 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
    - *Recommended:* tick "Use Apps Script as AI proxy" and put `GEMINI_API_KEY` in Script Properties. The key never reaches the phone.
    - *Direct:* paste the key in Setup (stored in this browser only). Restrict it in Google Cloud to the Generative Language API.
 
+## Data safety (v2.1)
+- Counts are stored in **IndexedDB** and the app asks the browser not to evict them. v2 data is migrated automatically; the old copy is kept under `sv_inventory_log_migrated`.
+- Nothing is overwritten silently: every create / edit / delete is also written to an **append-only audit log** with the full before/after, so a deleted or edited entry can always be recovered (it is included in backups).
+- **Drafts autosave** while you count and are restored after a reload, crash or phone call.
+- **Setup → Data safety & diagnostics:** download / restore a backup (restore only adds missing entries, never overwrites), see storage status, copy the error log. A reminder appears if there has been no backup for 7 days.
+- A global error handler records crashes, clears any stuck "scanning" overlay and shows a banner; saves are confirmed written before the form is cleared; double-taps cannot create duplicates.
+- Hardened delivery: no third-party scripts, styles or fonts; a Content-Security-Policy restricts what the page can load or call; the app starts offline.
+- AI calls are rate-limited (1 per second, 400 per day) to avoid runaway taps and surprise bills.
+
 ## Choosing the Gemini model
 Setup → **Gemini Model** is a dropdown. The default is `gemini-3.8-flash`. Tap **Check available models** to ask Google which models your key can use (works in direct mode, or in proxy mode via the script), pick one, and Save. Choose *Custom model ID…* to type any ID. If Google retires a model, the error message tells you to come back here.
 
@@ -29,7 +40,7 @@ Setup → **Gemini Model** is a dropdown. The default is `gemini-3.8-flash`. Tap
 Each entry has a status: **Synced / Not synced / Sync failed**. It only becomes *Synced* when the script answers `{"ok":true}`. Failed rows keep a Retry button, and edits re-sync the same row (upsert by id — no duplicates). Deleting locally does **not** delete the Sheet row.
 
 ## Known limitations
-- Tailwind is loaded from the Play CDN (pinned to 3.4.17) — fine for internal use; compile CSS with the Tailwind CLI for production.
-- No Subresource Integrity hashes on CDN assets.
+- Data is still per-device until the shared backend (Supabase) is added; take backups.
+- If you add a new backend host, add it to `connect-src` in the CSP `<meta>` in `index.html`.
 - Pins are renumbered after a removal (Undo is provided).
 - Apps Script sync/proxy is untested against a live deployment in CI.

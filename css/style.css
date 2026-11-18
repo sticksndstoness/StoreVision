@@ -30,3 +30,4 @@ body { min-height: 100vh; min-height: 100dvh; padding-bottom: calc(6rem + env(sa
 #openSettingsBtn { min-height: 44px; touch-action: manipulation; position: relative; z-index: 31; }
 /* Do not depend on the Tailwind CDN for the header's position */
 #appHeader { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; background: rgba(15,23,42,.95); }
+#errorBanner { padding-top: calc(0.5rem + env(safe-area-inset-top)); }

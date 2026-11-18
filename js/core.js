@@ -79,6 +79,107 @@
     return out.sort((a, b) => rank(a.id) - rank(b.id) || b.id.localeCompare(a.id, undefined, { numeric: true }));
   };
 
+
+  /* ---------- hardening: validation, change tracking, backups ---------- */
+  const STATUSES = ['synced', 'pending', 'failed'];
+  const str = (v, max) => String(v == null ? '' : v).slice(0, max);
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+  /** Coerce an arbitrary stored/imported row into a safe entry, or null if it is unusable. Never throws. */
+  SVCore.sanitizeEntry = function (raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const m = SVCore.migrateEntry(raw);
+    if (!m || typeof m !== 'object') return null;
+    const d = new Date(m.isoTime);
+    const qty = Math.max(0, num(m.totalQty));
+    return {
+      id: str(m.id, 64) || SVCore.makeId(),
+      isoTime: isNaN(d) ? new Date().toISOString() : d.toISOString(),
+      zone: str(m.zone, 40) || 'UNASSIGNED', partNo: str(m.partNo, 80) || 'UNKNOWN-SKU',
+      description: str(m.description, 300), barcode: str(m.barcode, 120), mfgDate: str(m.mfgDate, 40),
+      visibleCount: Math.max(0, Math.floor(num(m.visibleCount))), hiddenQty: Math.max(0, num(m.hiddenQty)),
+      depthMult: Math.max(1, Math.floor(num(m.depthMult)) || 1),
+      totalQty: qty, mrp: Math.max(0, num(m.mrp)), totalValue: Math.max(0, num(m.totalValue)),
+      aiCounted: !!m.aiCounted, edited: !!m.edited, counted: !!m.counted,
+      syncStatus: STATUSES.includes(m.syncStatus) ? m.syncStatus : 'pending'
+    };
+  };
+
+  /** Sanitise a list; returns {entries, dropped}. Duplicate ids keep the first occurrence. */
+  SVCore.sanitizeEntries = function (list) {
+    const out = []; const seen = new Set(); let dropped = 0;
+    for (const r of Array.isArray(list) ? list : []) {
+      const e = SVCore.sanitizeEntry(r);
+      if (!e || seen.has(e.id)) { dropped++; continue; }
+      seen.add(e.id); out.push(e);
+    }
+    return { entries: out, dropped };
+  };
+
+  /**
+   * Compare the previously persisted snapshot (Map id -> JSON string) with the current in-memory list.
+   * Returns what must be written, plus append-only audit events (create / update / delete with full snapshots,
+   * so a deleted or edited entry can always be recovered from the event log).
+   */
+  SVCore.diffEntries = function (prevMap, nextList, nowIso) {
+    const at = nowIso || new Date().toISOString();
+    const puts = [], events = [], nextIds = new Set();
+    for (const e of nextList) {
+      nextIds.add(e.id);
+      const json = JSON.stringify(e);
+      const before = prevMap.get(e.id);
+      if (before === undefined) { puts.push(e); events.push({ type: 'create', entryId: e.id, at, after: e }); }
+      else if (before !== json) { puts.push(e); events.push({ type: 'update', entryId: e.id, at, before: JSON.parse(before), after: e }); }
+    }
+    const deletes = [];
+    for (const [id, json] of prevMap) {
+      if (!nextIds.has(id)) { deletes.push(id); events.push({ type: 'delete', entryId: id, at, before: JSON.parse(json) }); }
+    }
+    return { puts, deletes, events };
+  };
+
+  SVCore.BACKUP_FORMAT = 'storevision-backup';
+  SVCore.BACKUP_VERSION = 1;
+
+  SVCore.makeBackup = function (entries, events, extra) {
+    return { format: SVCore.BACKUP_FORMAT, version: SVCore.BACKUP_VERSION, exportedAt: new Date().toISOString(),
+      counts: { entries: entries.length, events: (events || []).length }, entries, events: events || [], ...(extra || {}) };
+  };
+
+  /** Validate a parsed backup file. Never throws. */
+  SVCore.parseBackup = function (obj) {
+    if (!obj || typeof obj !== 'object' || obj.format !== SVCore.BACKUP_FORMAT) return { ok: false, error: 'This is not a StoreVision backup file.' };
+    if (!Number.isInteger(obj.version) || obj.version > SVCore.BACKUP_VERSION) return { ok: false, error: 'This backup was made by a newer version of the app.' };
+    if (!Array.isArray(obj.entries)) return { ok: false, error: 'The backup has no entries list.' };
+    const { entries, dropped } = SVCore.sanitizeEntries(obj.entries);
+    return { ok: true, entries, dropped, events: Array.isArray(obj.events) ? obj.events : [] };
+  };
+
+  /** Which backup entries are not already present (existing data always wins; restore never overwrites). */
+  SVCore.mergeBackup = function (existing, incoming) {
+    const have = new Set(existing.map((e) => e.id));
+    const add = incoming.filter((e) => !have.has(e.id));
+    return { add, skipped: incoming.length - add.length };
+  };
+
+  SVCore.daysSince = function (iso, now) {
+    const t = Date.parse(iso); if (!Number.isFinite(t)) return Infinity;
+    return ((now == null ? Date.now() : now) - t) / 86400000;
+  };
+
+  /** Free-form crash record, bounded so a crash loop cannot fill storage. */
+  SVCore.makeCrashRecord = function (kind, err, ctx) {
+    const e = err && typeof err === 'object' ? err : { message: String(err) };
+    return { at: new Date().toISOString(), kind: str(kind, 30), message: str(e.message || e, 500), stack: str(e.stack, 2000), ctx: str(ctx, 200) };
+  };
+
+  /** Minimum gap between AI calls + daily cap, as a pure function so it can be tested. */
+  SVCore.aiAllowance = function ({ lastAt, now, countToday, minGapMs, dailyCap }) {
+    if (countToday >= dailyCap) return { ok: false, reason: `Daily AI limit (${dailyCap}) reached. Count manually or try tomorrow.` };
+    if (lastAt && now - lastAt < minGapMs) return { ok: false, reason: 'Please wait a moment before the next AI request.' };
+    return { ok: true };
+  };
+
   SVCore.makeId = function () {
     return 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   };
@@ -92,13 +193,13 @@
     if (r && r.id && r.isoTime) return r;
     const visible = Number(r.visibleCount) || 0;
     return {
-      id: SVCore.makeId(),
-      isoTime: (() => { const d = new Date(r.timestamp); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
+      id: r.id ? String(r.id) : SVCore.makeId(),
+      isoTime: (() => { const d = new Date(r.isoTime || r.timestamp); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
       zone: r.zone || 'UNASSIGNED', partNo: r.partNo || 'UNKNOWN-SKU', description: r.description || '',
       barcode: r.barcode || '', mfgDate: r.mfgDate || '',
-      visibleCount: visible, hiddenQty: Number(r.hiddenOffset) || 0, depthMult: 1,
+      visibleCount: visible, hiddenQty: Number(r.hiddenQty != null ? r.hiddenQty : r.hiddenOffset) || 0, depthMult: Number(r.depthMult) || 1,
       totalQty: Number(r.totalQty) || 0, mrp: Number(r.mrp) || 0, totalValue: Number(r.totalValue) || 0,
-      aiCounted: false, edited: false, counted: false, syncStatus: 'pending'
+      aiCounted: !!r.aiCounted, edited: !!r.edited, counted: !!r.counted, syncStatus: r.syncStatus || 'pending'
     };
   };
 

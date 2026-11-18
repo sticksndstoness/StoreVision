@@ -11,12 +11,24 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <title>StoreVision Count — Smart Inventory</title>
-  <!-- Pinned Tailwind Play CDN version. For production, replace with a compiled CSS file (see README). -->
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <!-- No third-party scripts or styles: everything is served from this origin (works offline, nothing to hijack). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com https://script.google.com https://*.googleusercontent.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="stylesheet" href="css/tailwind.css" />
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body class="pb-24">
+
+  <div id="errorBanner" role="alert" class="hidden fixed inset-x-0 top-0 z-[70] bg-rose-900/95 border-b border-rose-500/50 px-4 pb-2.5 text-xs text-rose-50">
+    <div class="max-w-lg mx-auto flex items-center justify-between gap-2">
+      <span><i class="fa-solid fa-triangle-exclamation mr-1.5" aria-hidden="true"></i>Something went wrong. Your saved counts are safe.</span>
+      <span class="flex items-center gap-1.5 shrink-0">
+        <button id="errorReloadBtn" type="button" class="px-2.5 py-1.5 rounded bg-rose-700 font-semibold">Reload</button>
+        <button id="errorDetailsBtn" type="button" class="px-2.5 py-1.5 rounded bg-rose-800/80">Details</button>
+        <button id="errorDismissBtn" type="button" class="px-2 py-1.5 rounded bg-rose-800/80" aria-label="Dismiss"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </span>
+    </div>
+  </div>
 
   <header id="appHeader" class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 pb-3 flex items-center justify-between">
     <div class="flex items-center gap-2.5">
@@ -31,7 +43,7 @@
     <div class="flex items-center gap-2">
       <span id="offlineBadge" class="hidden text-[10px] px-2 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">Offline</span>
       <span id="syncIndicator" class="hidden text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-        <i class="fa-solid fa-cloud-check mr-1" aria-hidden="true"></i>Sheet Linked
+        <i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>Sheet Linked
       </span>
       <button id="openSettingsBtn" type="button" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-amber-400 flex items-center gap-1.5">
         <i class="fa-solid fa-gear" aria-hidden="true"></i> Setup
@@ -214,6 +226,7 @@
         <label class="col-span-2 flex items-center gap-2 text-[11px] text-slate-300"><input id="logGroupToggle" type="checkbox" class="accent-amber-500 w-4 h-4" /> Group by bay with subtotals</label>
       </div>
       <p id="logSummary" class="text-[11px] text-slate-400"></p>
+      <button id="backupHintBtn" type="button" class="hidden w-full text-left text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2"></button>
       <div id="logList" class="space-y-2 max-h-[28rem] overflow-y-auto"></div>
       <button id="clearLogBtn" type="button" class="hidden w-full text-[11px] text-rose-300/80 underline py-1">Clear entire local log</button>
     </section>
@@ -255,6 +268,20 @@
         </div>
       </div>
 
+      <div class="border-t border-slate-800 pt-3 space-y-2">
+        <h4 class="text-xs font-bold text-slate-200"><i class="fa-solid fa-shield-halved mr-1.5 text-emerald-400" aria-hidden="true"></i>Data safety &amp; diagnostics</h4>
+        <p id="storageInfo" class="text-[11px] text-slate-400">Checking storage…</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="downloadBackupBtn" type="button" class="px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-emerald-300"><i class="fa-solid fa-download mr-1.5" aria-hidden="true"></i>Download backup</button>
+          <label class="cursor-pointer px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-sky-300 text-center"><i class="fa-solid fa-upload mr-1.5" aria-hidden="true"></i>Restore backup
+            <input id="restoreBackupInput" type="file" accept="application/json,.json" class="sr-only" /></label>
+        </div>
+        <div class="flex items-center justify-between text-[11px] text-slate-400">
+          <span><span id="errorCount">0</span> error(s) logged</span>
+          <span><button id="copyErrorsBtn" type="button" class="underline text-sky-300 py-1 px-1">Copy log</button> · <button id="clearErrorsBtn" type="button" class="underline text-slate-400 py-1 px-1">Clear</button></span>
+        </div>
+      </div>
+
       <div class="flex justify-end gap-2 pt-2">
         <button id="cancelSettingsBtn" type="button" class="px-4 py-2.5 rounded-xl bg-slate-800 text-xs font-semibold text-slate-300">Cancel</button>
         <button id="saveSettingsBtn" type="button" class="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">Save Settings</button>
@@ -269,6 +296,7 @@
   </div>
 
   <script src="js/core.js"></script>
+  <script src="js/db.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

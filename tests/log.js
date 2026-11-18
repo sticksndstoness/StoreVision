@@ -4,6 +4,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const srv = http.createServer((q, r) => { const f = path.join(root, q.url.split('?')[0] === '/' ? 'index.html' : q.url.split('?')[0]); fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); return r.end(); } r.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' }); r.end(d); }); });
+const READY = () => document.documentElement.dataset.ready === '1';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails++; };
 const mk = (id, zone, partNo, desc, qty, counted) => ({ id, isoTime: new Date().toISOString(), zone, partNo, description: desc, barcode: '', mfgDate: '', visibleCount: qty, hiddenQty: 0, depthMult: 1, totalQty: qty, mrp: 10, totalValue: qty * 10, aiCounted: false, edited: false, counted, syncStatus: 'pending' });
 (async () => {
@@ -11,9 +12,9 @@ const mk = (id, zone, partNo, desc, qty, counted) => ({ id, isoTime: new Date().
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', acceptDownloads: true }); const p = await ctx.newPage();
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   await p.route(/cdn\.tailwindcss|cdnjs/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-  await p.goto('http://localhost:' + srv.address().port + '/');
+  await p.goto('http://localhost:' + srv.address().port + '/'); await p.waitForFunction(READY);
   await p.evaluate((d) => localStorage.setItem('sv_inventory_log', JSON.stringify(d)), [mk('a', 'D1', 'AF-1', 'Air filter', 5, true), mk('b', 'D10', 'OF-2', 'Oil filter', 3, false), mk('c', 'D2', 'BP-3', 'Brake pad', 2, false)]);
-  await p.reload();
+  await p.reload(); await p.waitForFunction(READY);
   const rows = () => p.locator('#logList input[data-act=counted]').count();
   ok((await rows()) === 3 && (await p.textContent('#logSummary')).includes('10 pcs'), 'all 3 shown, summary 10 pcs');
   await p.fill('#logSearch', 'filter'); await p.waitForTimeout(300); ok((await rows()) === 2, 'search "filter" -> 2');

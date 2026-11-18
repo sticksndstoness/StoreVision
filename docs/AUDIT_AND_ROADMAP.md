@@ -7,6 +7,9 @@ features and pricing before buying anything.
 
 ---
 
+> **Update (v2.1):** roadmap step 1 (hardening) is implemented — see the README section "Data safety". The weaknesses
+> numbered 1, 6, 7 and 10 below are addressed; 2, 3, 4, 5, 8, 9, 11, 12 are still open.
+
 ## 1. Honest audit of the current app
 
 ### 1.1 What it actually is
@@ -185,3 +188,19 @@ Whichever you pick, keep the local outbox so counting works with poor warehouse 
 5. Confirm the meaning of **RI** and **accidental** in your process, and who approves a restock.
 6. Do **counters** need to be blocked from seeing book quantity and prices? (I recommend yes.)
 7. Should the app ever write to SAP? (My strong advice: no — export an adjustment file for authorised posting.)
+
+
+---
+
+## 7. Findings from the sample SAP export (Bilaspur branch, structural facts only — no stock data is stored in this repo)
+- The report is **lot-level**: one row per part per GRN lot (≈2,900 rows for ≈1,850 distinct part codes). Reconciliation must
+  **sum rows per Part Code** before comparing with the physical count.
+- Quantities: `Total Quantity` = Available + Reserved + Blocked and is the figure to compare against a physical count.
+  `Issued Quantity` is a lot-history figure and must **not** be added. `In-Transit` is not physically in the store.
+- `Part-Bin Location` (about 200 distinct values such as `C01-E4`, `D02-C2`, `17A`) corresponds to your bays. A few are empty or `0`
+  and need a fallback. `Lot-Bin Location` (e.g. `BIN01`) is not a rack location.
+- Units are mostly `EA`, with `KIT`, `SET`, `ST`, `L`, `M`, `KG`, `MM` — **fractional quantities exist**, so counts must allow decimals for those units.
+- Part codes are text (e.g. `165462VE0A`); keep them as text so leading zeros and letters survive.
+- Price sensitivity: using **unit Cost > ₹10,000** flags roughly 135 parts (≈46% of stock value); using **MRP > ₹10,000** flags roughly 270.
+  The threshold basis (Cost vs MRP) will be a setting; Cost is the default because it is what a loss actually costs you.
+- Material types seen: `ZSPD`, `ZLOC`, `ZCON` (consumables/lubricants). Lubricants count in litres.

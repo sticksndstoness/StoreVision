@@ -22,20 +22,91 @@
   let zoneManual = false;      // user typed the zone, so AI must not overwrite it
   let busy = { label: false, stack: false, sync: false };
   const view = { q: '', zone: '', counted: '', group: false };
-  let inventoryLog = loadLog();
+  let inventoryLog = [];
+  let storageReady = false;    // never write the log before it has been loaded (would look like "delete everything")
+  let saving = false;
+  const SAVE_BTN_HTML = '<i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i> Save &amp; Sync to Google Sheet';
 
-  function loadLog() {
-    try {
-      const raw = JSON.parse(store.get(LS.LOG, '[]'));
-      return Array.isArray(raw) ? raw.map(C.migrateEntry) : [];
-    } catch (e) { return []; }
-  }
-  function persistLog() {
-    if (!store.set(LS.LOG, JSON.stringify(inventoryLog))) {
-      showToast('⚠ Could not save on this device (storage full or blocked). Export CSV now!', { ms: 8000 });
+  /** Persists the log. Never rejects: failures are reported to the user and the crash log. Resolves true/false. */
+  async function persistLog() {
+    if (!storageReady) return false;
+    try { await SVDB.saveDiff(inventoryLog); return true; }
+    catch (err) {
+      SVDB.logCrash(C.makeCrashRecord('storage', err, 'persistLog'));
+      showToast('⚠ Could not save on this device (' + (err && err.message || 'storage error') + '). Download a backup now.', { ms: 10000, actionLabel: 'Backup', onAction: downloadBackup });
       return false;
     }
-    return true;
+  }
+
+  /* ---------- global crash safety net ---------- */
+  let lastBannerAt = 0;
+  function unstick() {   // an unexpected error must never leave overlays or buttons stuck
+    busy.label = busy.stack = busy.sync = false; saving = false;
+    ['labelScanningOverlay', 'stackScanningOverlay'].forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
+    const b = $('saveSyncBtn'); if (b && storageReady) { b.disabled = false; b.innerHTML = SAVE_BTN_HTML; }
+  }
+  function showErrorBanner() {
+    if (Date.now() - lastBannerAt < 10000) return;
+    lastBannerAt = Date.now();
+    const el = $('errorBanner'); if (el) el.classList.remove('hidden');
+  }
+  function onFatal(kind, err) {
+    const msg = String((err && err.message) || err || '');
+    if (/ResizeObserver loop/i.test(msg)) return;      // harmless browser noise
+    try { SVDB.logCrash(C.makeCrashRecord(kind, err, location.pathname)); } catch (e) { /* never throw from the handler */ }
+    try { unstick(); showErrorBanner(); } catch (e) { /* ignore */ }
+  }
+  window.addEventListener('error', (e) => onFatal('error', e.error || e.message));
+  window.addEventListener('unhandledrejection', (e) => onFatal('promise', e.reason));
+
+  /* ---------- draft autosave (survives reloads, crashes, phone calls, iOS killing the tab) ---------- */
+  let draftTimer = null, restoringDraft = false;
+  function collectDraft() {
+    const img = $('stackImg');
+    const src = img && !img.classList.contains('hidden') ? img.getAttribute('src') : null;
+    return {
+      v: 1, savedAt: Date.now(), aiCounted, zoneManual, pins,
+      stackDataUrl: src && src.startsWith('data:image/') ? src : null,
+      fields: {
+        partNo: $('partNoInput').value, barcode: $('barcodeInput').value, desc: $('descInput').value, mrp: $('mrpInput').value,
+        mfg: $('mfgInput').value, zone: $('zoneInput').value, hidden: $('hiddenOffsetInput').value, mult: $('depthMultSelect').value, roi: $('roiToggle').checked
+      }
+    };
+  }
+  function draftIsEmpty(d) {
+    const f = d.fields;   // the bay alone is not worth restoring: it is kept between saves anyway
+    return !d.pins.length && !d.stackDataUrl && !f.partNo && !f.barcode && !f.desc && !f.mrp && !f.mfg && (f.hidden === '0' || f.hidden === '') && f.mult === '1';
+  }
+  function flushDraft() {
+    clearTimeout(draftTimer); draftTimer = null;
+    if (!storageReady || restoringDraft) return;
+    const d = collectDraft();
+    (draftIsEmpty(d) ? SVDB.clearDraft() : SVDB.saveDraft(d)).catch(() => { /* best effort */ });
+  }
+  function scheduleDraft() { if (!storageReady || restoringDraft) return; clearTimeout(draftTimer); draftTimer = setTimeout(flushDraft, 700); }
+
+  async function restoreDraft() {
+    let d; try { d = await SVDB.loadDraft(); } catch (e) { return; }
+    if (!d || typeof d !== 'object' || !d.fields || !Array.isArray(d.pins) || draftIsEmpty(d)) return;
+    restoringDraft = true;
+    try {
+      const f = d.fields;
+      $('partNoInput').value = String(f.partNo || '').slice(0, 80); $('barcodeInput').value = String(f.barcode || '').slice(0, 120);
+      $('descInput').value = String(f.desc || '').slice(0, 300); $('mrpInput').value = String(f.mrp || '').slice(0, 20);
+      $('mfgInput').value = String(f.mfg || '').slice(0, 40); $('zoneInput').value = String(f.zone || '').slice(0, 40);
+      $('hiddenOffsetInput').value = String(f.hidden || '0').slice(0, 10);
+      if (['1', '2', '3', '4'].includes(String(f.mult))) $('depthMultSelect').value = String(f.mult);
+      $('roiToggle').checked = f.roi !== false;
+      pins = d.pins.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)).map((p) => ({ x: p.x, y: p.y, source: p.source === 'manual' ? 'manual' : 'ai' }));
+      aiCounted = !!d.aiCounted; zoneManual = !!d.zoneManual;
+      if (typeof d.stackDataUrl === 'string' && d.stackDataUrl.startsWith('data:image/')) {
+        currentStackBase64 = d.stackDataUrl.split(',')[1] || null;
+        $('stackImg').src = d.stackDataUrl; $('stackImg').classList.remove('hidden');
+        $('stackPlaceholder').classList.add('hidden'); $('pinControls').classList.remove('hidden');
+      }
+      renderPins();
+    } finally { restoringDraft = false; }
+    showToast('Restored your unsaved count', { actionLabel: 'Discard', ms: 8000, onAction: () => resetForm() });
   }
 
   /* ---------- toast ---------- */
@@ -120,6 +191,7 @@
     $('useProxyToggle').checked = s.proxy; fillModelSelect(s.model);
     syncDirectKeyVisibility();
     $('settingsModal').classList.remove('hidden');
+    refreshDiagnostics().catch(() => {});
   }
   function closeSettings() { $('settingsModal').classList.add('hidden'); }
   function syncDirectKeyVisibility() { $('directKeyWrap').classList.toggle('hidden', $('useProxyToggle').checked); }
@@ -204,7 +276,19 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       ? msg + ' — open Setup and change "Gemini Model" (try ' + DEFAULT_MODEL + ').' : msg;
   }
 
+  const AI_MIN_GAP_MS = 1000, AI_DAILY_CAP = 400;   // protects against runaway taps and surprise bills
+  let lastAiAt = 0;
+  function aiGuard() {
+    const today = new Date().toISOString().slice(0, 10);
+    let st; try { st = JSON.parse(store.get('sv_ai_count', 'null')); } catch (e) { st = null; }
+    if (!st || st.day !== today) st = { day: today, n: 0 };
+    const a = C.aiAllowance({ lastAt: lastAiAt, now: Date.now(), countToday: st.n, minGapMs: AI_MIN_GAP_MS, dailyCap: AI_DAILY_CAP });
+    if (!a.ok) throw new Error(a.reason);
+    lastAiAt = Date.now(); st.n++; store.set('sv_ai_count', JSON.stringify(st));
+  }
+
   async function callGemini(base64Image, promptText, schema) {
+    aiGuard();
     const s = settings();
     if (s.proxy) {
       if (!s.url || !s.token) { openSettings(); throw new Error('Set the Sheet URL and token in Setup first.'); }
@@ -347,11 +431,18 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('visibleCountDisplay').textContent = t.visible;
     $('totalQtyDisplay').innerHTML = `${t.totalQty} <span class="text-xs font-normal text-slate-400">units</span>`;
     $('totalValueDisplay').textContent = (aiCounted ? '≈ ' : '') + C.fmtInr(t.totalValue);
+    scheduleDraft();
   }
 
   /* ---------- save & sync ---------- */
   async function saveAndSyncEntry() {
-    if (busy.sync) return;
+    if (!storageReady) return showToast('Still opening storage — try again in a second');
+    if (busy.sync || saving) return;
+    saving = true;
+    try { await saveEntryFlow(); } finally { saving = false; }
+  }
+
+  async function saveEntryFlow() {
     const t = currentTotals();
     const partNo = $('partNoInput').value.trim() || 'UNKNOWN-SKU';
     const zone = $('zoneInput').value.trim() || 'UNASSIGNED';
@@ -368,8 +459,13 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       aiCounted, edited: false, counted: false, syncStatus: 'pending'
     };
     inventoryLog.unshift(entry);
-    persistLog(); renderLog();
+    if (!(await persistLog())) {          // not on disk: keep the form so nothing the user typed is lost
+      inventoryLog = inventoryLog.filter((e) => e !== entry); renderLog();
+      return;
+    }
+    renderLog();
     resetForm();
+    SVDB.requestPersistence();            // ask the browser not to evict our data (best effort)
 
     if (!settings().url) { showToast('Saved locally! Add Sheet URL in Setup for cloud sync.'); return; }
     await syncEntries([entry]);
@@ -383,6 +479,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('stackPlaceholder').classList.remove('hidden'); $('pinControls').classList.add('hidden');
     $('labelPreviewWrap').classList.add('hidden'); $('labelPreviewImg').removeAttribute('src');
     renderPins(); // zone is intentionally kept: next SKU is usually on the same rack
+    clearTimeout(draftTimer); SVDB.clearDraft().catch(() => {});
   }
 
   /** Posts entries to the Apps Script. Only marks 'synced' when the script confirms with {ok:true}. */
@@ -391,7 +488,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     if (!s.url) return showToast('Add the Sheet URL in Setup first');
     if (!s.token) { openSettings(); return showToast('Add the access token in Setup first'); }
     busy.sync = true;
-    const btn = $('saveSyncBtn'), orig = btn.innerHTML;
+    const btn = $('saveSyncBtn'), orig = SAVE_BTN_HTML;
     btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Syncing to Google Sheet...';
     let okCount = 0, lastErr = '';
     try {
@@ -419,7 +516,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
 
   /* ---------- log rendering / edit / delete ---------- */
   const STATUS = {
-    synced: ['text-emerald-400', 'fa-cloud-check', 'Synced'],
+    synced: ['text-emerald-400', 'fa-circle-check', 'Synced'],
     pending: ['text-amber-300', 'fa-clock', 'Not synced'],
     failed: ['text-rose-400', 'fa-triangle-exclamation', 'Sync failed']
   };
@@ -480,6 +577,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('csvLabel').textContent = filtered ? 'CSV (filtered)' : 'CSV';
 
     const container = $('logList');
+    if (!storageReady) { container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">Opening your saved counts…</p>'; return; }
     if (!inventoryLog.length) { container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No scans logged yet.</p>'; return; }
     if (!list.length) { container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">No entries match this filter.</p>'; return; }
     if (!view.group) { container.innerHTML = list.map(rowHtml).join(''); return; }
@@ -491,6 +589,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
   }
 
   function onLogClick(ev) {
+    if (!storageReady) return;
     const btn = ev.target.closest('button[data-act]');
     if (!btn) return;
     const idx = inventoryLog.findIndex((e) => e.id === btn.dataset.id);
@@ -513,6 +612,64 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       const hint = entry.syncStatus === 'synced' ? ' (the Sheet row is not deleted — remove it there too)' : '';
       showToast(`Deleted ${entry.partNo}${hint}`, { actionLabel: 'Undo', ms: 7000, onAction: () => { inventoryLog.splice(idx, 0, entry); persistLog(); renderLog(); } });
     }
+  }
+
+  /* ---------- backup / restore / diagnostics ---------- */
+  function updateBackupHint() {
+    const el = $('backupHintBtn'); if (!el) return;
+    if (!storageReady || !inventoryLog.length) { el.classList.add('hidden'); return; }
+    const last = store.get('sv_last_backup');
+    const days = last ? C.daysSince(last) : Infinity;
+    if (days <= 7) { el.classList.add('hidden'); return; }
+    el.textContent = last ? `⚠ Last backup ${Math.floor(days)} days ago — tap to download a new one` : '⚠ No backup yet — tap to download one';
+    el.classList.remove('hidden');
+  }
+
+  async function downloadBackup() {
+    try {
+      const bk = await SVDB.exportAll();
+      const blob = new Blob([JSON.stringify(bk)], { type: 'application/json' });
+      const a = document.createElement('a'); const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      a.href = url; a.download = `storevision_backup_${stamp}.json`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      store.set('sv_last_backup', new Date().toISOString()); updateBackupHint();
+      showToast(`Backup saved: ${bk.counts.entries} entries, ${bk.counts.events} history records`);
+    } catch (err) { showToast('Backup failed: ' + err.message); }
+  }
+
+  async function restoreBackup(input) {
+    const file = input.files && input.files[0]; input.value = '';
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) return showToast('That file is too large to be a StoreVision backup');
+    let parsed;
+    try { parsed = C.parseBackup(JSON.parse(await file.text())); } catch (e) { parsed = { ok: false, error: 'Could not read that file.' }; }
+    if (!parsed.ok) return showToast(parsed.error, { ms: 6000 });
+    const have = new Set(inventoryLog.map((e) => e.id));
+    const fresh = parsed.entries.filter((e) => !have.has(e.id)).length;
+    if (!fresh) return showToast('Nothing to restore — every entry in that backup is already here');
+    if (!confirm(`Restore ${fresh} entries from this backup?\n${parsed.entries.length - fresh} already exist and will be left untouched.`)) return;
+    try {
+      const r = await SVDB.importBackup(parsed);
+      inventoryLog = (await SVDB.loadEntries()).entries; renderLog(); updateBackupHint();
+      showToast(`Restored ${r.added} entries` + (r.dropped ? ` (${r.dropped} unreadable rows skipped)` : ''), { ms: 6000 });
+    } catch (err) { showToast('Restore failed: ' + err.message); }
+  }
+
+  async function refreshDiagnostics() {
+    const info = await SVDB.storageInfo();
+    const crashes = await SVDB.getCrashLog();
+    const mode = info.mode === 'idb' ? 'Secure database (IndexedDB)' : 'Basic storage (localStorage — less safe)';
+    const persist = info.persisted === true ? 'protected from automatic cleanup' : info.persisted === false ? 'NOT protected from automatic cleanup — keep backups' : 'protection status unknown';
+    $('storageInfo').textContent = `${mode}; ${persist}.` + (info.usageMB != null ? ` Using ${info.usageMB} MB.` : '') + ` ${inventoryLog.length} entries.`;
+    $('errorCount').textContent = crashes.length;
+  }
+
+  async function copyErrorLog() {
+    const log = await SVDB.getCrashLog();
+    const text = JSON.stringify({ app: 'StoreVision', at: new Date().toISOString(), ua: navigator.userAgent, errors: log.slice(-20) }, null, 2);
+    try { await navigator.clipboard.writeText(text); showToast('Error log copied'); }
+    catch (e) { window.prompt('Copy this error log:', text); }
   }
 
   /* ---------- export / share ---------- */
@@ -564,6 +721,18 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('depthMultSelect').addEventListener('change', recalculateTotals);
     $('zoneInput').addEventListener('input', () => { zoneManual = true; });
     $('saveSyncBtn').addEventListener('click', saveAndSyncEntry);
+    $('saveSyncBtn').disabled = true;     // enabled once storage has opened
+    ['partNoInput', 'barcodeInput', 'descInput', 'mfgInput', 'zoneInput'].forEach((id) => $(id).addEventListener('input', scheduleDraft));
+    $('roiToggle').addEventListener('change', scheduleDraft);
+
+    $('downloadBackupBtn').addEventListener('click', downloadBackup);
+    $('backupHintBtn').addEventListener('click', downloadBackup);
+    $('restoreBackupInput').addEventListener('change', (e) => restoreBackup(e.target));
+    $('copyErrorsBtn').addEventListener('click', copyErrorLog);
+    $('clearErrorsBtn').addEventListener('click', async () => { await SVDB.clearCrashLog(); refreshDiagnostics(); });
+    $('errorReloadBtn').addEventListener('click', () => location.reload());
+    $('errorDismissBtn').addEventListener('click', () => $('errorBanner').classList.add('hidden'));
+    $('errorDetailsBtn').addEventListener('click', () => { $('errorBanner').classList.add('hidden'); openSettings(); });
 
     $('logList').addEventListener('click', onLogClick);
     $('logList').addEventListener('change', (ev) => {
@@ -586,17 +755,55 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('clearLogBtn').addEventListener('click', () => {
       const n = unsynced().length;
       if (!confirm(n ? `${n} entries are NOT synced and will be lost. Export CSV first.\n\nClear the whole local log?` : 'Clear the whole local log? (Sheet rows are not affected.)')) return;
-      inventoryLog = []; persistLog(); renderLog();
+      inventoryLog = []; persistLog(); renderLog(); updateBackupHint();
+      showToast('Local log cleared (history is kept in the audit log; restore from a backup if needed)', { ms: 6000 });
     });
 
     const setOffline = () => $('offlineBadge').classList.toggle('hidden', navigator.onLine);
     window.addEventListener('online', setOffline); window.addEventListener('offline', setOffline); setOffline();
 
+    // flush the draft the moment the page is hidden: iOS can kill background tabs without warning
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushDraft();
+      else if (storageReady && !busy.sync && !saving) reloadFromStorage();   // pick up changes made in another tab
+    });
+    window.addEventListener('pagehide', flushDraft);
+
     updateSyncBadge(); renderPins(); renderLog();
+    initStorage();
     if (!settings().key && !settings().proxy) setTimeout(() => showToast('Tap Setup to enter your Gemini key or proxy'), 800);
 
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      let hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) { hadController = true; return; }            // first install, not an update
+        showToast('A new version is ready', { actionLabel: 'Reload', ms: 15000, onAction: () => location.reload() });
+      });
       navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  }
+
+  async function reloadFromStorage() {
+    try { inventoryLog = (await SVDB.loadEntries()).entries; renderLog(); updateBackupHint(); } catch (e) { /* keep what we have */ }
+  }
+
+  async function initStorage() {
+    try {
+      const info = await SVDB.open();
+      const { entries, dropped } = await SVDB.loadEntries();
+      inventoryLog = entries; storageReady = true;
+      $('saveSyncBtn').disabled = false;
+      renderLog(); updateBackupHint();
+      if (info.mode !== 'idb') showToast('⚠ Secure storage is unavailable here — using basic storage. Download backups often.', { ms: 9000 });
+      else if (info.migrated) showToast(`Moved ${info.migrated} earlier entries into secure storage`, { ms: 6000 });
+      if (dropped) showToast(`${dropped} unreadable entries were skipped`, { ms: 6000 });
+      await restoreDraft();
+      SVDB.requestPersistence();
+    } catch (err) {
+      onFatal('init', err);
+      showToast('Could not open storage: ' + (err && err.message || err), { ms: 9000 });
+    } finally {
+      document.documentElement.dataset.ready = '1';
     }
   }
   document.addEventListener('DOMContentLoaded', init);
