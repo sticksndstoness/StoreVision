@@ -63,6 +63,22 @@
     catch (e) { throw new Error('Could not understand the AI response (invalid JSON). Try again.'); }
   };
 
+  /** Turn a Gemini ListModels response into [{id,label}] of models usable for image -> JSON (generateContent). */
+  SVCore.parseModelList = function (json) {
+    const list = (json && Array.isArray(json.models)) ? json.models : [];
+    const skip = /embed|tts|imagen|veo|live|audio|aqa|image-generation|robotics|learnlm/i;
+    const seen = new Set(); const out = [];
+    for (const m of list) {
+      const id = String(m && m.name || '').replace(/^models\//, '');
+      if (!id || seen.has(id) || skip.test(id)) continue;
+      if (Array.isArray(m.supportedGenerationMethods) && !m.supportedGenerationMethods.includes('generateContent')) continue;
+      seen.add(id); out.push({ id, label: m.displayName || id });
+    }
+    // flash-class first (default for this app), then the rest newest-looking (reverse natural order) first
+    const rank = (id) => (/flash/i.test(id) && !/lite/i.test(id) ? 0 : /pro/i.test(id) ? 1 : /lite/i.test(id) ? 2 : 3);
+    return out.sort((a, b) => rank(a.id) - rank(b.id) || b.id.localeCompare(a.id, undefined, { numeric: true }));
+  };
+
   SVCore.makeId = function () {
     return 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   };

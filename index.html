@@ -247,8 +247,11 @@
           <p class="text-[10px] text-slate-400 mt-1">Stored in this browser only. Restrict the key in Google Cloud (HTTP referrer + Generative Language API only).</p>
         </div>
         <div>
-          <label for="modelInput" class="block text-xs font-semibold text-slate-300 mb-1">Gemini Model</label>
-          <input id="modelInput" type="text" placeholder="gemini-3.8-flash" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none" />
+          <label for="modelSelect" class="block text-xs font-semibold text-slate-300 mb-1">Gemini Model</label>
+          <select id="modelSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none"></select>
+          <input id="modelCustomInput" type="text" autocomplete="off" placeholder="Type a model ID, e.g. gemini-3.8-flash" class="hidden mt-2 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none" />
+          <button id="checkModelsBtn" type="button" class="mt-2 w-full px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-sky-300"><i class="fa-solid fa-magnifying-glass mr-1.5" aria-hidden="true"></i>Check available models</button>
+          <p id="modelStatus" class="text-[10px] text-slate-400 mt-1">Default is <span class="font-mono">gemini-3.8-flash</span>. Tap "Check available models" to list what your key can use.</p>
         </div>
       </div>
 

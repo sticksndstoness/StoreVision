@@ -39,6 +39,7 @@ function doPost(e) {
     if (!tokenOk_(body.token)) return json_({ ok: false, error: 'Unauthorized: bad or missing token' });
     if (body.action === 'append') return json_(appendEntry_(body.entry));
     if (body.action === 'vision') return json_(vision_(body));
+    if (body.action === 'models') return json_(models_());
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -94,5 +95,17 @@ function vision_(b) {
   var code = res.getResponseCode();
   var parsed = JSON.parse(res.getContentText());
   if (code !== 200) return { ok: false, error: (parsed.error && parsed.error.message) || ('Gemini error ' + code) };
+  return { ok: true, result: parsed };
+}
+
+/** Lists models the server-side Gemini key can use (for the app's "Check available models" button). */
+function models_() {
+  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key) return { ok: false, error: 'GEMINI_API_KEY is not set in Script Properties' };
+  var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+    method: 'get', muteHttpExceptions: true, headers: { 'x-goog-api-key': key }
+  });
+  var parsed = JSON.parse(res.getContentText());
+  if (res.getResponseCode() !== 200) return { ok: false, error: (parsed.error && parsed.error.message) || ('Gemini error ' + res.getResponseCode()) };
   return { ok: true, result: parsed };
 }

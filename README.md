@@ -22,6 +22,9 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
    - *Recommended:* tick "Use Apps Script as AI proxy" and put `GEMINI_API_KEY` in Script Properties. The key never reaches the phone.
    - *Direct:* paste the key in Setup (stored in this browser only). Restrict it in Google Cloud to the Generative Language API.
 
+## Choosing the Gemini model
+Setup → **Gemini Model** is a dropdown. The default is `gemini-3.8-flash`. Tap **Check available models** to ask Google which models your key can use (works in direct mode, or in proxy mode via the script), pick one, and Save. Choose *Custom model ID…* to type any ID. If Google retires a model, the error message tells you to come back here.
+
 ## Sync behaviour
 Each entry has a status: **Synced / Not synced / Sync failed**. It only becomes *Synced* when the script answers `{"ok":true}`. Failed rows keep a Retry button, and edits re-sync the same row (upsert by id — no duplicates). Deleting locally does **not** delete the Sheet row.
 

@@ -38,4 +38,17 @@ t('uniqueZones / groupByZone natural sort + subtotals', () => {
   assert.deepStrictEqual(C.uniqueZones(E), ['D1', 'D2', 'D10']);
   const g = C.groupByZone(E); assert.deepStrictEqual(g.map((x) => x.zone), ['D1', 'D2', 'D10']); assert.strictEqual(g[0].qty, 5); assert.strictEqual(g[2].value, 30);
 });
+t('parseModelList keeps generateContent models, drops embeddings/tts, flash first', () => {
+  const r = C.parseModelList({ models: [
+    { name: 'models/text-embedding-9', supportedGenerationMethods: ['embedContent'] },
+    { name: 'models/gemini-3.5-flash-lite', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-3.1-pro', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+    { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-3.8-flash-tts', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/old-only-count', supportedGenerationMethods: ['countTokens'] }
+  ] });
+  assert.deepStrictEqual(r.map((m) => m.id), ['gemini-3.8-flash', 'gemini-3.1-pro', 'gemini-3.5-flash-lite']);
+  assert.deepStrictEqual(C.parseModelList(null), []);
+});
 console.log(`\n${n} tests passed`);

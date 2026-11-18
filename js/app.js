@@ -4,7 +4,7 @@
   const C = window.SVCore;
   const $ = (id) => document.getElementById(id);
 
-  const LS = { LOG: 'sv_inventory_log', KEY: 'sv_gemini_key', URL: 'sv_webhook_url', TOKEN: 'sv_webhook_token', PROXY: 'sv_use_proxy', MODEL: 'sv_model' };
+  const LS = { LOG: 'sv_inventory_log', KEY: 'sv_gemini_key', URL: 'sv_webhook_url', TOKEN: 'sv_webhook_token', PROXY: 'sv_use_proxy', MODEL: 'sv_model', MODELS: 'sv_model_list' };
   const DEFAULT_MODEL = 'gemini-3.8-flash';
   const RETIRED_MODELS = ['gemini-2.5-flash']; // Google no longer serves these to new keys; fall back to the default
   const FETCH_TIMEOUT_MS = 45000;
@@ -59,10 +59,65 @@
     key: store.get(LS.KEY), url: store.get(LS.URL), token: store.get(LS.TOKEN),
     proxy: store.get(LS.PROXY) === '1', model: usableModel(store.get(LS.MODEL))
   });
+  /* ---------- model picker ---------- */
+  const CUSTOM = '__custom__';
+  const cachedModels = () => { try { const v = JSON.parse(store.get(LS.MODELS, '[]')); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+
+  function fillModelSelect(selected, list) {
+    const models = (list || cachedModels()).slice();
+    if (!models.some((m) => m.id === DEFAULT_MODEL)) models.unshift({ id: DEFAULT_MODEL, label: DEFAULT_MODEL });
+    if (selected && !models.some((m) => m.id === selected)) models.push({ id: selected, label: selected });
+    const sel = $('modelSelect'); const E = C.escapeHtml;
+    sel.innerHTML = models.map((m) => `<option value="${E(m.id)}">${E(m.id)}${m.id === DEFAULT_MODEL ? '  (default)' : ''}</option>`).join('') + `<option value="${CUSTOM}">Custom model ID…</option>`;
+    sel.value = selected || DEFAULT_MODEL;
+    $('modelCustomInput').classList.add('hidden');
+  }
+  function chosenModel() {
+    const v = $('modelSelect').value;
+    return v === CUSTOM ? $('modelCustomInput').value.trim() : v;
+  }
+
+  async function checkModels() {
+    const btn = $('checkModelsBtn'), status = $('modelStatus');
+    const useProxy = $('useProxyToggle').checked;
+    const key = $('apiKeyInput').value.trim() || store.get(LS.KEY);
+    const url = $('webhookUrlInput').value.trim() || store.get(LS.URL);
+    const token = $('webhookTokenInput').value.trim() || store.get(LS.TOKEN);
+    if (useProxy ? !(url && token) : !key) { status.textContent = useProxy ? 'Enter the Sheet URL and token first.' : 'Enter your Gemini API key first.'; return; }
+    btn.disabled = true; status.textContent = 'Asking Google which models your key can use…';
+    try {
+      let json = { models: [] };
+      if (useProxy) {
+        const res = await fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'models', token }) });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || 'Proxy error');
+        json = body.result;
+      } else {
+        let pageToken = '';
+        for (let i = 0; i < 5; i++) {
+          const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: { 'x-goog-api-key': key } });
+          if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error((err.error && err.error.message) || `API Error (${res.status})`); }
+          const page = await res.json();
+          json.models = json.models.concat(page.models || []);
+          pageToken = page.nextPageToken || '';
+          if (!pageToken) break;
+        }
+      }
+      const list = C.parseModelList(json);
+      if (!list.length) throw new Error('No usable models returned for this key.');
+      store.set(LS.MODELS, JSON.stringify(list));
+      const keep = chosenModel();
+      const pick = list.some((m) => m.id === keep) ? keep : (list.some((m) => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : list[0].id);
+      fillModelSelect(pick, list);
+      status.textContent = `Found ${list.length} models. Pick one and tap Save Settings.`;
+    } catch (err) { status.textContent = '⚠ ' + err.message; }
+    finally { btn.disabled = false; }
+  }
+
   function openSettings() {
     const s = settings();
     $('apiKeyInput').value = s.key; $('webhookUrlInput').value = s.url; $('webhookTokenInput').value = s.token;
-    $('useProxyToggle').checked = s.proxy; $('modelInput').value = store.get(LS.MODEL);
+    $('useProxyToggle').checked = s.proxy; fillModelSelect(s.model);
     syncDirectKeyVisibility();
     $('settingsModal').classList.remove('hidden');
   }
@@ -76,7 +131,7 @@
     const ok = [
       store.set(LS.KEY, $('apiKeyInput').value.trim()), store.set(LS.URL, url),
       store.set(LS.TOKEN, $('webhookTokenInput').value.trim()),
-      store.set(LS.PROXY, $('useProxyToggle').checked ? '1' : '0'), store.set(LS.MODEL, $('modelInput').value.trim())
+      store.set(LS.PROXY, $('useProxyToggle').checked ? '1' : '0'), store.set(LS.MODEL, chosenModel())
     ].every(Boolean);
     updateSyncBadge(); closeSettings();
     showToast(ok ? 'Settings saved on device' : '⚠ Could not store settings on this device');
@@ -496,6 +551,8 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('cancelSettingsBtn').addEventListener('click', closeSettings);
     $('saveSettingsBtn').addEventListener('click', saveSettings);
     $('useProxyToggle').addEventListener('change', syncDirectKeyVisibility);
+    $('checkModelsBtn').addEventListener('click', checkModels);
+    $('modelSelect').addEventListener('change', (e) => $('modelCustomInput').classList.toggle('hidden', e.target.value !== CUSTOM));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettings(); });
 
     ['labelCamera', 'labelGallery'].forEach((id) => $(id).addEventListener('change', (e) => handleLabelFile(e.target)));
