@@ -26,7 +26,9 @@ const png = tmp('sv_h.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAAC
   });
   await ctx.route('https://script.google.com/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true}' }));
   const go = async (pg = p) => { await pg.goto(base); await pg.waitForFunction(READY); };
-  const reload = async (pg = p) => { await pg.reload(); await pg.waitForFunction(READY); };
+  // wait for any queued database write to commit first (loadEntries runs behind the write queue), like a person pausing before a reload
+  const settle = (pg) => pg.evaluate(() => (window.SVDB ? SVDB.loadEntries() : null)).catch(() => {});
+  const reload = async (pg = p) => { await settle(pg); await pg.reload(); await pg.waitForFunction(READY); };
   const count = async (pg = p) => Number(await pg.textContent('#logCount'));
   const quickSave = async (pg, part, qty) => { await pg.fill('#partNoInput', part); await pg.fill('#hiddenOffsetInput', String(qty)); await pg.click('#saveSyncBtn'); await pg.waitForFunction((n) => document.getElementById('partNoInput').value === '' && document.getElementById('logList').innerText.includes(n), part); };
 
