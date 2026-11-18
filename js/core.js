@@ -101,7 +101,8 @@
       depthMult: Math.max(1, Math.floor(num(m.depthMult)) || 1),
       totalQty: qty, mrp: Math.max(0, num(m.mrp)), totalValue: Math.max(0, num(m.totalValue)),
       aiCounted: !!m.aiCounted, edited: !!m.edited, counted: !!m.counted,
-      syncStatus: STATUSES.includes(m.syncStatus) ? m.syncStatus : 'pending'
+      syncStatus: STATUSES.includes(m.syncStatus) ? m.syncStatus : 'pending',
+      sapStatus: ['matched', 'unmatched', 'unchecked'].includes(m.sapStatus) ? m.sapStatus : 'unchecked'   // was the part found in the branch's SAP list when it was counted?
     };
   };
 
@@ -276,11 +277,11 @@
   };
 
   SVCore.entriesToCsv = function (entries) {
-    const headers = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date', 'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value', 'AI Counted', 'Edited', 'Counted/Verified', 'Sync Status'];
+    const headers = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date', 'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value', 'AI Counted', 'Edited', 'Counted/Verified', 'In SAP list', 'Sync Status'];
     const rows = entries.map((r) => [
       r.id, r.isoTime, r.zone, r.partNo, r.description, r.barcode, r.mfgDate,
       r.visibleCount, r.hiddenQty, r.depthMult, r.totalQty, r.mrp, r.totalValue,
-      r.aiCounted ? 'yes' : 'no', r.edited ? 'yes' : 'no', r.counted ? 'yes' : 'no', r.syncStatus
+      r.aiCounted ? 'yes' : 'no', r.edited ? 'yes' : 'no', r.counted ? 'yes' : 'no', r.sapStatus === 'matched' ? 'yes' : r.sapStatus === 'unmatched' ? 'NO' : '', r.syncStatus
     ].map(SVCore.csvCell).join(','));
     return '﻿' + [headers.map(SVCore.csvCell).join(','), ...rows].join('\r\n');
   };

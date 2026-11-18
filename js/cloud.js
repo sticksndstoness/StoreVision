@@ -49,6 +49,7 @@
     if (!init()) return;
     try { await client.auth.signOut(); } catch (e) { /* offline: clear locally below */ }
     ctx = null; emit();
+    signOutListeners.slice().forEach((fn) => { try { fn(); } catch (e) { /* ignore */ } });
   };
 
   /** Called on page load: resume a saved session if there is one. Never throws (the app must work signed out and offline). */
@@ -135,6 +136,33 @@
       throw new Error(friendly(e));
     } finally { clearTimeout(timer); }
   };
+
+  /* ---------- part list for counting (code, description, unit, bin only: never quantities or prices) ---------- */
+  const PAGE = 1000;                                   // the API returns at most 1000 rows per request, so the list is fetched in pages
+  SVCloud.loadPartList = async function (branchId) {
+    init();
+    const rows = []; let total = null;
+    for (let from = 0; from < 200000; from += PAGE) {
+      const { data, error } = await client.rpc('part_list', { p_branch: branchId }).range(from, from + PAGE - 1);
+      if (error) fail(error);
+      if (!data || !data.length) break;
+      if (total == null) total = Number(data[0].total_rows);
+      for (const r of data) rows.push({ part_code: r.part_code, description: r.description, uom: r.uom, bin: r.bin, snapshot_id: r.snapshot_id });
+      if (data.length < PAGE) break;
+    }
+    if (total != null && rows.length !== total) throw new Error('The part list was received incompletely. Try again on a better connection.');   // never keep a cut-off list
+    return rows;
+  };
+
+  /** Branches this person can count in (their active memberships; owners: every active branch). */
+  SVCloud.countingBranches = async function () {
+    if (!ctx) return [];
+    if (root.SVCore.isOwner(ctx)) { try { return (await SVCloud.listBranches()).filter((b) => b.active).map((b) => ({ id: b.id, name: b.name, code: b.code })); } catch (e) { return []; } }
+    return (ctx.memberships || []).filter((m) => m.active && m.branch && m.branch.active !== false).map((m) => ({ id: m.branch_id, name: m.branch.name, code: m.branch.code }));
+  };
+
+  const signOutListeners = [];
+  SVCloud.onSignOut = (fn) => { signOutListeners.push(fn); };
 
   async function callTeam(action, payload) {
     init();

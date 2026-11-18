@@ -39,6 +39,12 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 ## Shared backend (in progress)
 The multi-branch, role-based backend (Supabase) is being added in steps. Setup instructions: `docs/SUPABASE_SETUP.md`. Database rules live in `supabase/migrations/` and are tested with `npm run test:db`.
 
+## Identifying the part (no AI needed)
+When signed in, the phone downloads the branch's **SAP part list** (code, description, unit, bay; **never quantities or prices**, enforced in the database) and keeps it for offline use. A label read then resolves to ONE exact SAP part:
+the part number the AI read, or any piece of the QR / barcode text, is matched against the list; SAP is the authority for the code and description.
+A misread code (letter O for zero, one digit missing...) is **suggested, never silently replaced**; a part that is not in SAP can still be counted but is marked "not in SAP list". There is also a type-ahead search (code or description words) and tappable SAP bays.
+The list is fetched in pages (the API returns at most 1000 rows) and checked against `total_rows`, so a cut-off list is never kept. Signing out deletes it from the phone. People in several branches (and owners) choose their counting branch in Account.
+
 ## Label scanning
 Step 1 sends the label photo to the AI (1600 px, the first version's simple prompt and request) and **shows the result as soon as the AI answers**. The on-device **barcode / QR scanner** then runs in the background, never delays the screen, and fills the Barcode box when it finds a code (it never overwrites something typed by hand; a small barcode is re-read from the photo's original resolution). Switch the scanner off in Setup if a phone feels slow. The message under the photo stays on screen: what was read, what is missing, codes seen, the exact AI error, and the timing (AI / scan / photo size / model) so slowness can be diagnosed.
 

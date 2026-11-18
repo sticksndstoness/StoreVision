@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const C = window.SVCore;
+  const Cloud = window.SVCloud;
   const $ = (id) => document.getElementById(id);
 
   const LS = { LOG: 'sv_inventory_log', KEY: 'sv_gemini_key', URL: 'sv_webhook_url', TOKEN: 'sv_webhook_token', PROXY: 'sv_use_proxy', MODEL: 'sv_model', MODELS: 'sv_model_list' };
@@ -329,10 +330,20 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       return C.parseModelJson(C.extractGeminiText(body.result));
     }
     if (!s.key) { openSettings(); throw new Error('Please enter your Gemini API Key in Setup first.'); }
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.model)}:generateContent`;
+    return geminiWithFallback(s, base64Image, promptText, schema);
+  }
+
+  /* Google sometimes answers "high demand / overloaded" (HTTP 503 or 429) for a popular model. That is temporary and not our fault,
+     so: wait a moment and retry once; if it is still busy, try the next model from the list you fetched in Setup. */
+  const BUSY_RE = /overload|high demand|unavailable|try again later|resource.?exhausted|quota|too many requests/i;
+  let lastModelUsed = '';
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function geminiOnce(model, key, base64Image, promptText, schema) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const res = await fetchWithTimeout(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.key }, // header, not URL, so it stays out of logs/history
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, // header, not URL, so it stays out of logs/history
       body: JSON.stringify({
         contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: 'image/jpeg', data: base64Image } }] }],
         generationConfig: schema ? { temperature: 0.1, responseMimeType: 'application/json', responseSchema: schema, maxOutputTokens: 8192 }
@@ -341,12 +352,134 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(modelHint((err.error && err.error.message) || `API Error (${res.status})`));
+      const raw = (err.error && err.error.message) || `API Error (${res.status})`;
+      const e = new Error(modelHint(raw)); e.busy = res.status === 503 || res.status === 429 || BUSY_RE.test(raw); throw e;
     }
     return C.parseModelJson(C.extractGeminiText(await res.json()));
   }
 
+  async function geminiWithFallback(s, base64Image, promptText, schema) {
+    lastModelUsed = s.model;
+    try { return await geminiOnce(s.model, s.key, base64Image, promptText, schema); }
+    catch (e1) {
+      if (!e1.busy) throw e1;
+      await sleep(1200);                                                  // 1) the same model once more
+      try { return await geminiOnce(s.model, s.key, base64Image, promptText, schema); }
+      catch (e2) {
+        if (!e2.busy) throw e2;
+        const alt = cachedModels().map((m) => m.id).find((id) => id !== s.model && !RETIRED_MODELS.includes(id));
+        if (!alt) throw new Error('Google\'s AI is busy right now (high demand). Try again in a minute, or pick another model in Setup.');
+        try { lastModelUsed = alt + ' (' + s.model + ' was busy)'; return await geminiOnce(alt, s.key, base64Image, promptText, schema); }   // 2) the next model on your list
+        catch (e3) { lastModelUsed = s.model; throw e3.busy ? new Error('Google\'s AI is busy right now (high demand). Try again in a minute, or pick another model in Setup.') : e3; }
+      }
+    }
+  }
+
   /* ---------- label scan ---------- */
+
+  /* ---------- SAP part list: identify the exact part without any AI ---------- */
+  let partIndex = null, partTouched = false;
+  const partsKey = (b) => 'parts:' + b;
+  const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
+
+  function setPartIndex(rows, at) {
+    partIndex = rows && rows.length ? SVParts.build(rows) : null;
+    $('partFinder').classList.toggle('hidden', !partIndex);
+    $('partListInfo').textContent = partIndex ? `(${partIndex.size.toLocaleString('en-IN')} parts · updated ${ago(at)})` : '';
+    $('partResults').innerHTML = ''; if (!partIndex) renderPartMatch(null);
+  }
+  async function loadCachedParts() {                         // instant, works offline
+    const branch = store.get('sv_parts_branch'); if (!branch) return;
+    try { const c = await SVDB.getMeta(partsKey(branch)); if (c && Array.isArray(c.rows)) setPartIndex(c.rows, c.at); } catch (e) { /* no cache */ }
+  }
+  async function countBranchId() {
+    const list = await Cloud.countingBranches(); if (!list.length) return '';
+    const saved = store.get('sv_count_branch'); return (list.find((b) => b.id === saved) || list[0]).id;
+  }
+  async function refreshParts() {                            // fresh list when signed in and online; the cached one stays if this fails
+    if (!Cloud.available() || !Cloud.context() || navigator.onLine === false) return;
+    try {
+      const branch = await countBranchId(); if (!branch) return;
+      const rows = await Cloud.loadPartList(branch);
+      if (!Cloud.context()) return;                          // signed out while loading
+      const at = Date.now();
+      await SVDB.setMeta(partsKey(branch), rows.length ? { at, rows } : null); store.set('sv_parts_branch', branch);
+      setPartIndex(rows, at);
+    } catch (e) { if (partIndex) $('partListInfo').textContent += ' · could not refresh'; }
+  }
+  async function forgetParts() {                             // signing out removes the SAP part list from this phone
+    const branch = store.get('sv_parts_branch'); store.set('sv_parts_branch', '');
+    if (branch) { try { await SVDB.setMeta(partsKey(branch), null); } catch (e) { /* ignore */ } }
+    setPartIndex(null);
+  }
+
+  function renderPartMatch(r) {
+    const box = $('partMatch'); const E = C.escapeHtml;
+    if (!r) { box.className = 'hidden'; box.innerHTML = ''; return; }
+    const chip = (act, attr, label, cls) => `<button type="button" data-act="${act}" ${attr} class="px-2 py-1 rounded-lg border ${cls} text-[11px] font-semibold">${E(label)}</button>`;
+    if (r.status === 'exact') {
+      const p = r.part;
+      box.className = 'rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs space-y-1.5';
+      box.innerHTML = `<p class="text-emerald-300 font-bold"><i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>SAP part ${E(p.part_code)}${r.via ? ' <span class="font-normal text-emerald-200/80">(found by ' + E(r.via) + ')</span>' : ''}</p>
+        <p class="text-white">${E(p.description || '')}</p>
+        ${p.bins.length ? `<p class="text-slate-300">Bays in SAP: ${p.bins.map((b) => chip('bin', 'data-bin="' + E(b) + '"', b, 'border-slate-600 text-amber-300')).join(' ')}</p>` : ''}
+        ${r.alternatives && r.alternatives.length ? `<p class="text-slate-300">Same code, other variant: ${r.alternatives.map((a) => chip('pick', 'data-code="' + E(a.part_code) + '"', a.part_code, 'border-slate-600 text-sky-300')).join(' ')}</p>` : ''}`;
+    } else if (r.status === 'suggest') {
+      box.className = 'rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs space-y-1.5';
+      box.innerHTML = `<p class="text-amber-300 font-bold"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>${E(r.read || 'That code')} is not in the SAP list. Did you mean:</p>
+        <div class="flex flex-wrap gap-1.5">${r.suggestions.map((p) => chip('pick', 'data-code="' + E(p.part_code) + '"', p.part_code + ' — ' + (p.description || '').slice(0, 28), 'border-amber-500/50 text-amber-200')).join('')}</div>`;
+    } else {
+      box.className = 'rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs';
+      box.innerHTML = `<p class="text-amber-300"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>${r.read ? E(r.read) + ' is not' : 'This part is not'} in the SAP list for this branch. Check the code, or find it below. You can still count it; it will be marked "not in SAP list".</p>`;
+    }
+  }
+
+  function pickPart(code) {
+    if (!partIndex) return; const hit = SVParts.find(partIndex, code); if (!hit) return;
+    $('partNoInput').value = hit.part.part_code; if (hit.part.description) $('descInput').value = hit.part.description;
+    partTouched = true; renderPartMatch({ status: 'exact', part: hit.part, alternatives: hit.alternatives, via: 'your selection' });
+    $('partResults').innerHTML = ''; $('partSearch').value = ''; recalculateTotals();
+  }
+
+  /** After a label read: AI part number + QR/barcode texts -> the exact SAP part. SAP is the authority for code and description. */
+  function applyLabelMatch(codeTexts, st) {
+    if (!partIndex || partTouched) return;
+    const typed = $('partNoInput').value.trim();
+    const r = SVParts.identify(partIndex, { partNo: typed, texts: codeTexts || [] });
+    if (r.status === 'exact') {
+      $('partNoInput').value = r.part.part_code; if (r.part.description) $('descInput').value = r.part.description;
+      if (st && !st.filled.includes('Part No')) st.filled.push('Part No'); if (st && !st.filled.includes('SAP part')) st.filled.push('SAP part');
+      renderPartMatch(r);
+    } else if (r.status === 'suggest') { r.read = typed || 'The code on the label'; renderPartMatch(r); }
+    else if (typed || (codeTexts || []).length) { renderPartMatch({ status: 'none', read: typed }); }
+    else renderPartMatch(null);
+  }
+
+  let partTypeTimer;
+  function onPartNoTyped() {                                  // typing a code by hand is checked against the list too
+    partTouched = true; if (!partIndex) return;
+    clearTimeout(partTypeTimer);
+    partTypeTimer = setTimeout(() => {
+      const v = $('partNoInput').value.trim();
+      if (v.length < 3) return renderPartMatch(null);
+      const r = SVParts.identify(partIndex, { partNo: v });
+      if (r.status === 'exact') { if (!$('descInput').value && r.part.description) $('descInput').value = r.part.description; renderPartMatch(Object.assign(r, { via: 'what you typed' })); }
+      else { r.read = v; renderPartMatch(r.status === 'suggest' ? r : { status: 'none', read: v }); }
+      recalculateTotals();
+    }, 250);
+  }
+  function renderPartResults() {
+    const q = $('partSearch').value; const E = C.escapeHtml; const res = SVParts.search(partIndex, q, 8);
+    $('partResults').innerHTML = !partIndex || q.trim().length < 2 ? '' : res.length
+      ? res.map((p) => `<button type="button" data-act="pick" data-code="${E(p.part_code)}" class="w-full text-left bg-slate-950 border border-slate-800 hover:border-sky-500 rounded-lg px-2.5 py-2"><span class="text-xs font-bold text-white">${E(p.part_code)}</span> <span class="text-[11px] text-slate-400">${E((p.description || '').slice(0, 40))}</span><span class="block text-[10px] text-slate-500">${E(p.bins.slice(0, 4).join(' · '))}</span></button>`).join('')
+      : '<p class="text-[11px] text-slate-500 px-1">No part found. Check the spelling.</p>';
+  }
+  function onPartAreaClick(ev) {
+    const b = ev.target.closest('button[data-act]'); if (!b) return;
+    if (b.dataset.act === 'pick') pickPart(b.dataset.code);
+    else if (b.dataset.act === 'bin') { $('zoneInput').value = b.dataset.bin; zoneManual = true; recalculateTotals(); }
+  }
+
   const LABEL_MAX_DIM = 1600;   // sharp enough for a label, far smaller to upload than 2560 (the first version used 1024)
   let labelScanId = 0, barcodeTouched = false;
   const scannerOn = () => store.get('sv_scanner', '1') !== '0';
@@ -376,8 +509,8 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     input.value = ''; // allow re-selecting the same photo
     if (!file || busy.label) return;
     busy.label = true; labelStatus('Reading the label…');
-    const myId = ++labelScanId; barcodeTouched = false;
-    const st = { filled: [], codes: [], aiError: '', aiMs: null, scanMs: null, kb: 0, model: settings().proxy ? 'AI proxy' : settings().model, scanning: false };
+    const myId = ++labelScanId; barcodeTouched = false; partTouched = false;
+    const st = { filled: [], codes: [], aiError: '', aiMs: null, scanMs: null, kb: 0, model: '', scanning: false };
     let img;
     try {
       img = await compressImage(file, LABEL_MAX_DIM, { quality: 0.82, previewDim: 900, wantPixels: scannerOn(), wantFullPixels: scannerOn() });
@@ -389,12 +522,13 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       // 1) the AI answers first and the screen is released as soon as it does
       const t0 = Date.now(); let d = {};
       try { d = await callGemini(img.base64, LABEL_PROMPT, null); } catch (e) { st.aiError = e.message; showToast(e.message); }
-      st.aiMs = Date.now() - t0;
+      st.aiMs = Date.now() - t0; st.model = settings().proxy ? 'AI proxy' : (lastModelUsed || settings().model);
       if (d.partNo) { $('partNoInput').value = d.partNo; st.filled.push('Part No'); }
       if (d.description) { $('descInput').value = d.description; st.filled.push('Description'); }
       if (d.barcode && !$('barcodeInput').value) { $('barcodeInput').value = String(d.barcode).trim(); st.filled.push('Barcode'); }
       if (d.mrp > 0) { $('mrpInput').value = d.mrp; st.filled.push('MRP'); }
       if (d.mfgDate) { $('mfgInput').value = d.mfgDate; st.filled.push('Mfg date'); }
+      applyLabelMatch([], st);
       recalculateTotals();
       st.scanning = scannerOn() && !!img.pixels;
       renderLabelStatus(st);
@@ -416,6 +550,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     } catch (e) { st.codes = []; }
     st.scanMs = Date.now() - t1; st.scanning = false;
     if (myId !== labelScanId) return;                                     // a newer photo has been taken: drop this result
+    applyLabelMatch(st.codes.map((c) => c.text), st);
     const code = SVScan.pickBarcode(st.codes);
     if (code && !barcodeTouched) { $('barcodeInput').value = code; st.filled = st.filled.filter((f) => !f.startsWith('Barcode')); st.filled.push('Barcode (scanned)'); recalculateTotals(); }
     renderLabelStatus(st);
@@ -537,7 +672,8 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       description: $('descInput').value.trim(), barcode: $('barcodeInput').value.trim(), mfgDate: $('mfgInput').value.trim(),
       visibleCount: t.visible, hiddenQty: t.hidden, depthMult: t.mult,
       totalQty: t.totalQty, mrp: t.mrp, totalValue: t.totalValue,
-      aiCounted, edited: false, counted: false, syncStatus: 'pending'
+      aiCounted, edited: false, counted: false, syncStatus: 'pending',
+      sapStatus: partIndex ? (SVParts.find(partIndex, partNo) ? 'matched' : 'unmatched') : 'unchecked'
     };
     inventoryLog.unshift(entry);
     if (!(await persistLog())) {          // not on disk: keep the form so nothing the user typed is lost
@@ -559,6 +695,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('stackImg').removeAttribute('src'); $('stackImg').classList.add('hidden');
     $('stackPlaceholder').classList.remove('hidden'); $('pinControls').classList.add('hidden');
     $('labelPreviewWrap').classList.add('hidden'); $('labelPreviewImg').removeAttribute('src'); labelStatus('Tip: fill the frame with the label and hold steady.');
+    renderPartMatch(null); $('partSearch').value = ''; $('partResults').innerHTML = ''; partTouched = false;
     renderPins(); // zone is intentionally kept: next SKU is usually on the same rack
     clearTimeout(draftTimer); SVDB.clearDraft().catch(() => {});
   }
@@ -613,7 +750,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
               <span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">${E(item.zone)}</span>
               <span class="text-xs font-bold text-white truncate">${E(item.partNo)}</span>
             </div>
-            <p class="text-[11px] text-slate-400 truncate mt-0.5">${E(item.description) || 'No description'}</p>
+            <p class="text-[11px] text-slate-400 truncate mt-0.5">${E(item.description) || 'No description'}${item.sapStatus === 'unmatched' ? ' <span class="text-amber-300">• not in SAP list</span>' : ''}</p>
             <p class="text-[10px] text-slate-500">${E(when)}${item.aiCounted ? ' • AI est.' : ''}${item.edited ? ' • edited' : ''}</p>
           </div>
           <div class="text-right shrink-0">
@@ -802,6 +939,11 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     $('depthMultSelect').addEventListener('change', recalculateTotals);
     $('zoneInput').addEventListener('input', () => { zoneManual = true; });
     $('barcodeInput').addEventListener('input', () => { barcodeTouched = true; });
+    $('partNoInput').addEventListener('input', onPartNoTyped);
+    $('partSearch').addEventListener('input', renderPartResults);
+    $('partResults').addEventListener('click', onPartAreaClick); $('partMatch').addEventListener('click', onPartAreaClick);
+    if (window.SVCloud) { SVCloud.onChange((c) => { if (c) setTimeout(refreshParts, 0); }); SVCloud.onSignOut(forgetParts); }
+    window.addEventListener('online', () => refreshParts()); document.addEventListener('sv:countbranch', () => refreshParts());
     $('saveSyncBtn').addEventListener('click', saveAndSyncEntry);
     $('saveSyncBtn').disabled = true;     // enabled once storage has opened
     ['partNoInput', 'barcodeInput', 'descInput', 'mfgInput', 'zoneInput'].forEach((id) => $(id).addEventListener('input', scheduleDraft));
@@ -879,7 +1021,9 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       if (info.mode !== 'idb') showToast('⚠ Secure storage is unavailable here — using basic storage. Download backups often.', { ms: 9000 });
       else if (info.migrated) showToast(`Moved ${info.migrated} earlier entries into secure storage`, { ms: 6000 });
       if (dropped) showToast(`${dropped} unreadable entries were skipped`, { ms: 6000 });
+      await loadCachedParts();
       await restoreDraft();
+      if (partIndex && $('partNoInput').value.trim().length >= 3) onPartNoTyped();
       SVDB.requestPersistence();
     } catch (err) {
       onFatal('init', err);
