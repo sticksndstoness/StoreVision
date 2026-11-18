@@ -277,4 +277,24 @@ do $$ declare n bigint; begin
   perform t.pass('the server key can read the SAP tables');
 exception when insufficient_privilege then perform t.back(); raise exception 'FAIL - server key cannot read SAP tables: %', sqlerrm; end $$;
 
+-- ------------------------------------------------------------------ part list for the counting phones (migration 6)
+select t.check((select pg_get_function_result('public.part_list(uuid)'::regprocedure)) !~* '(qty|quantity|cost|mrp|value|sensitive|amount|price)', 'the part list function cannot return a quantity, cost, MRP or sensitivity column');
+select t.check((select count(*) from pg_proc where proname = 'part_list') = 1, 'there is exactly one part_list function');
+select t.check(t.count_as(:'C1', format($q$select 1 from public.part_list(%L) where total_rows = 3$q$, :'BIL')) = 3, 'every row carries total_rows so the phone can verify it received the whole list');
+select t.check(t.count_as(:'C1', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 3, 'a counter gets the 3 parts of the current snapshot (code, description, unit, bin)');
+select t.check(t.count_as(:'M', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 3, 'a manager gets it too');
+select t.check(t.count_as(:'A', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 3, 'a branch admin gets it too');
+select t.check(t.count_as(:'O', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 3, 'an owner gets it too');
+select t.check(t.count_as(:'J', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 0, 'a member of another branch gets nothing for Bilaspur');
+select t.check(t.count_as(:'X', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 0, 'a deactivated person gets nothing');
+select t.check(t.count_as(:'C2', format($q$select * from public.part_list(%L)$q$, :'BIL')) = 0, 'a deactivated helper gets nothing');
+select t.check(t.count_as(:'C1', format($q$select * from public.part_list(%L)$q$, :'JHA')) = 0, 'a Bilaspur helper gets nothing for another branch');
+select t.check(t.count_as(:'C1', format($q$select * from public.part_list(%L) where snapshot_id <> %L$q$, :'BIL', :'sid3')) = 0, 'only the CURRENT snapshot is listed (never an older one)');
+select t.check((select string_agg(part_code || '@' || bin, ',' order by part_code) from public.part_list(:'BIL'::uuid)) is null, 'sanity: with no logged-in user the function returns nothing');
+do $$ begin
+  perform t.as_anon();
+  begin perform * from public.part_list('00000000-0000-0000-0000-000000000000'); raise exception 'FAIL - the public key could call part_list';
+  exception when insufficient_privilege then perform t.back(); perform t.pass('the public key cannot call part_list'); end;
+end $$;
+
 select 'ALL DONE' as result;

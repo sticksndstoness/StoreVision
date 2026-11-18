@@ -4,8 +4,8 @@
   "version": "2.1.0",
   "scripts": {
     "build:css": "tailwindcss -i css/tailwind.src.css -o css/tailwind.css --minify",
-    "test": "node tests/core.test.js && node tests/team-logic.test.mjs && node tests/function-build.test.mjs && node tests/sap.test.mjs && node tests/scan.test.cjs",
-    "test:browser": "node tests/e2e.js && node tests/log.js && node tests/models.js && node tests/header.js && node tests/hardening.js && node tests/team.js && node tests/stock.js && node tests/label.js",
+    "test": "node tests/core.test.js && node tests/team-logic.test.mjs && node tests/function-build.test.mjs && node tests/sap.test.mjs && node tests/scan.test.cjs && node tests/parts.test.cjs",
+    "test:browser": "node tests/e2e.js && node tests/log.js && node tests/models.js && node tests/header.js && node tests/hardening.js && node tests/team.js && node tests/stock.js && node tests/label.js && node tests/parts.js",
     "test:all": "npm test && npm run test:db && npm run test:browser",
     "test:db": "bash tests/db/run.sh",
     "build:fn": "node tools/build-function.mjs"

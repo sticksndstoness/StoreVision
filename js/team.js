@@ -40,6 +40,16 @@
     $('openTeamBtn').classList.toggle('hidden', !C.canOpenTeam(ctx));
     $('openBranchesBtn').classList.toggle('hidden', !C.canOpenBranches(ctx));
     $('openStockBtn').classList.toggle('hidden', !C.canUploadSap(ctx));
+    fillCountBranch();
+  }
+
+  async function fillCountBranch() {              // only shown when there is a real choice (owners, or people in several branches)
+    const list = await Cloud.countingBranches();
+    $('countBranchWrap').classList.toggle('hidden', list.length < 2);
+    if (list.length < 2) return;
+    let saved = ''; try { saved = localStorage.getItem('sv_count_branch') || ''; } catch (e) { /* ignore */ }
+    $('countBranchSelect').innerHTML = list.map((b) => `<option value="${E(b.id)}">${E(b.name)} (${E(b.code)})</option>`).join('');
+    $('countBranchSelect').value = list.some((b) => b.id === saved) ? saved : list[0].id;
   }
 
   async function doLogin() {
@@ -186,6 +196,7 @@
     $('loginBtn').addEventListener('click', doLogin);
     $('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     $('signOutBtn').addEventListener('click', async () => { await Cloud.signOut(); close('accountModal'); });
+    $('countBranchSelect').addEventListener('change', (e) => { try { localStorage.setItem('sv_count_branch', e.target.value); } catch (x) { /* ignore */ } document.dispatchEvent(new CustomEvent('sv:countbranch')); });
     $('openTeamBtn').addEventListener('click', openTeam);
     $('openBranchesBtn').addEventListener('click', openBranches);
     $('closeTeamX').addEventListener('click', () => close('teamModal'));

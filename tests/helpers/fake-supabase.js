@@ -13,7 +13,7 @@ function createFake(L) {
     { user_id: H, full_name: 'Hari Helper', email: 'helper@ex.com', is_owner: false, active: true }, { user_id: N, full_name: 'Nina Nobranch', email: 'none@ex.com', is_owner: false, active: true }];
   const memberships = [{ user_id: A, branch_id: BIL, role: 'admin', active: true }, { user_id: H, branch_id: BIL, role: 'counter', active: true }];
   const branches = [{ id: BIL, code: '6696', name: 'Bilaspur', active: true, sensitive_threshold: 10000 }];
-  const snapshots = [], stock = [];
+  const snapshots = [], stock = [], partListCalls = [];
   const fnCalls = [], restCalls = [];
   let nextId = 100;
   const callerOf = (req) => { const t = (req.headers()['authorization'] || '').replace(/^Bearer /, ''); try { return JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString()).sub; } catch (e) { return null; } };
@@ -55,6 +55,20 @@ function createFake(L) {
       return send(400, { error: 'Unknown action.' });
     }
 
+
+    if (p === '/rest/v1/rpc/part_list') {
+      // mirrors public.part_list(): members only, CURRENT snapshot only, code/description/uom/bin (+ total_rows), at most 1000 rows per request
+      const caller = callerOf(req), a = JSON.parse(req.postData() || '{}'), me = ctxOf(caller); restCalls.push('RPC part_list');
+      const member = !!me && (me.isOwner || me.memberships.some((m) => m.active && m.branch_id === a.p_branch));
+      const cur = snapshots.find((x) => x.branch_id === a.p_branch && x.is_current);
+      const rowsAll = member && cur ? stock.filter((r) => r.snapshot_id === cur.id).sort((x, y) => (x.bin + x.part_code).localeCompare(y.bin + y.part_code)) : [];
+      const limit = Math.min(Number(url.searchParams.get('limit') || 1000), 1000), offset = Number(url.searchParams.get('offset') || 0);
+      const page = rowsAll.slice(offset, offset + limit).map((r) => ({ snapshot_id: r.snapshot_id, part_code: r.part_code, description: r.description || '', uom: r.uom || '', bin: r.bin, total_rows: rowsAll.length }));
+      if (net.shortPartList && page.length < limit) page.pop();   // simulate a cut-off last page: total_rows still says the full count
+      partListCalls.push({ offset, limit, returned: page.length, keys: page[0] ? Object.keys(page[0]) : [] });
+      if (net.failPartList) return send(500, { message: 'boom' });
+      return send(200, page);
+    }
 
     if (p === '/rest/v1/rpc/import_sap_snapshot') {
       const caller = callerOf(req), a = JSON.parse(req.postData() || '{}'), me = ctxOf(caller); restCalls.push('RPC import_sap_snapshot');
@@ -100,6 +114,6 @@ function createFake(L) {
   };
 
 
-  return { handler, net, state: { users, profiles, memberships, branches, snapshots, stock }, ids: { BIL, O, A, H, N }, fnCalls, restCalls, uuid, jwt, nextId: () => nextId++ };
+  return { handler, net, partListCalls, state: { users, profiles, memberships, branches, snapshots, stock }, ids: { BIL, O, A, H, N }, fnCalls, restCalls, uuid, jwt, nextId: () => nextId++ };
 }
 module.exports = { createFake, uuid, jwt };
