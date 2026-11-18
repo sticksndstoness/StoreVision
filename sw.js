@@ -1,11 +1,11 @@
 // Offline app shell. Everything is same-origin now (no CDNs). API calls (Gemini / Apps Script) are never cached.
 // Same-origin files are network-first, so a new deployment is picked up on the next load; the cache is the offline fallback.
-const CACHE = 'storevision-v6';
+const CACHE = 'storevision-v7';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './icons/icon.svg',
   './css/tailwind.css', './css/style.css', './vendor/fontawesome/css/all.min.css',
   './vendor/fontawesome/webfonts/fa-solid-900.woff2', './vendor/fontawesome/webfonts/fa-brands-400.woff2',
-  './js/config.js', './vendor/supabase/supabase.js', './vendor/readxlsx/read-excel-file.min.js', './js/sap.js', './js/core.js', './js/db.js', './js/cloud.js', './js/app.js', './js/team.js', './js/stock.js'
+  './js/config.js', './vendor/supabase/supabase.js', './vendor/readxlsx/read-excel-file.min.js', './js/sap.js', './vendor/zxing/zxing.min.js', './js/scan.js', './js/core.js', './js/db.js', './js/cloud.js', './js/app.js', './js/team.js', './js/stock.js'
 ];
 
 self.addEventListener('install', (e) => {
