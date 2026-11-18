@@ -12,6 +12,7 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 | `js/core.js` | Pure logic (totals, validation, change tracking, backups, CSV) — unit tested |
 | `js/db.js` | Storage: IndexedDB, audit log, drafts, crash log, backup/restore |
 | `js/app.js` | DOM, Gemini calls, sync |
+| `js/sap.js`, `js/stock.js`, `vendor/readxlsx/` | SAP stock report reader (xlsx/csv) and the upload screen |
 | `js/cloud.js`, `js/team.js`, `js/config.js` | Sign-in, Team and Branches screens (Supabase). Public key only in `config.js` |
 | `supabase/` | Database migrations (RLS) and the `team-admin` Edge Function. `tools/` builds the single-file function (`npm run build:fn`) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Installable PWA + offline app shell |
@@ -37,6 +38,15 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 
 ## Shared backend (in progress)
 The multi-branch, role-based backend (Supabase) is being added in steps. Setup instructions: `docs/SUPABASE_SETUP.md`. Database rules live in `supabase/migrations/` and are tested with `npm run test:db`.
+
+## Label scanning
+Step 1 reads the label two ways at once: the **barcode / QR scanner** (on the phone, free, exact, works offline; if no barcode is found at normal size it looks again at the photo's original resolution) and the **AI** (part no, description, MRP, mfg date). Labels are sent to the AI at up to 2560 px, because the text on a label that is small in the frame is unreadable at 1024 px. The result stays on screen under the photo: what was read, what was not, which codes were seen, and the exact reason if the AI failed. The barcode box is filled from the scanner whenever it finds a code, even if the AI is down or has no key.
+
+## SAP stock upload (admins / owners)
+Account → **SAP stock** → choose the branch → choose the SAP *Stock Report* (.xlsx or .csv). The app shows what it found and blocks the upload if anything is unsafe:
+a cut-off export (the title row's "Total Number of Lines" must match), a file that mixes branches, unreadable numbers, a file whose **Branch Code** is not the branch you chose, or no report date.
+Rules used: lot rows are summed per part and bin; the book quantity is **Total Quantity** (available + reserved + blocked); *Issued Quantity* and *In-Transit* are ignored; parts with unit cost above the branch threshold (default ₹10,000) are flagged sensitive.
+Each upload becomes the branch's *current* SAP stock; older ones are kept. **Counters can never read SAP stock** (enforced in the database; tested with `npm run test:db`).
 
 ## Choosing the Gemini model
 Setup → **Gemini Model** is a dropdown. The default is `gemini-3.8-flash`. Tap **Check available models** to ask Google which models your key can use (works in direct mode, or in proxy mode via the script), pick one, and Save. Choose *Custom model ID…* to type any ID. If Google retires a model, the error message tells you to come back here.

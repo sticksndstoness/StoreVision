@@ -203,4 +203,78 @@ do $$ begin
   exception when insufficient_privilege then perform t.back(); perform t.pass('the public key still cannot write the audit log'); end;
 end $$;
 
+-- ------------------------------------------------------------------ SAP snapshots (migration 5)
+create function t.import_as(u uuid, b uuid, code text, rows jsonb) returns uuid language plpgsql as $$
+declare sid uuid;
+begin perform t.as_user(u); select public.import_sap_snapshot(b, 'Stock_Report_15.10.2026_Bilaspur_1.xlsx', date '2026-10-15', code, 3, rows) into sid; perform t.back(); return sid; end $$;
+create function t.import_fails(u uuid, b uuid, code text, rows jsonb, expect text, msg text) returns void language plpgsql as $$
+begin
+  perform t.as_user(u);
+  begin
+    perform public.import_sap_snapshot(b, 'f.xlsx', null, code, 1, rows); perform t.back();
+    raise exception 'FAIL - % (the upload was allowed)', msg;
+  exception when others then
+    perform t.back();
+    if sqlstate = expect then perform t.pass(msg); else raise exception 'FAIL - % (expected SQLSTATE %, got % : %)', msg, expect, sqlstate, sqlerrm; end if;
+  end;
+end $$;
+
+\set ROWS '[{"part_code":"AF-100","bin":"C01-E4","description":"AIR FILTER","uom":"EA","book_qty":8,"available_qty":8,"blocked_qty":0,"unit_cost":407.5,"mrp":650},{"part_code":"SENS-1","bin":"PLAT","description":"SPEED SENSOR","uom":"EA","book_qty":2,"available_qty":2,"blocked_qty":0,"unit_cost":12500,"mrp":15000},{"part_code":"OIL","bin":"18_C","description":"OIL","uom":"L","book_qty":12.5,"available_qty":12.5,"blocked_qty":0,"unit_cost":300,"mrp":420}]'
+select t.import_as(:'A', :'BIL', '6696', :'ROWS'::jsonb) as sid1 \gset
+
+select t.check((select count(*) from public.sap_stock where snapshot_id = :'sid1') = 3, 'branch admin can upload a SAP snapshot (3 lines stored)');
+select t.check((select part_count = 3 and row_count = 3 and total_qty = 22.5 and is_current and report_date = date '2026-10-15' and file_name like 'Stock_Report%' from public.sap_snapshots where id = :'sid1'), 'snapshot records its totals, date, file name and is current');
+select t.check((select array_agg(part_code order by part_code) from public.sap_stock where snapshot_id = :'sid1' and is_sensitive) = array['SENS-1'], 'only the part above the 10,000 threshold is flagged sensitive');
+select t.check((select sensitive_threshold from public.sap_snapshots where id = :'sid1') = 10000, 'the threshold used is stored with the snapshot');
+
+-- blind counting: who can read the book figures
+select t.check(t.count_as(:'C1', 'select 1 from public.sap_stock') = 0, 'a counter cannot read SAP stock (blind counting)');
+select t.check(t.count_as(:'C1', 'select 1 from public.sap_snapshots') = 0, 'a counter cannot even see that a snapshot exists');
+select t.check(t.count_as(:'M', 'select 1 from public.sap_stock') = 3, 'a manager can read the SAP stock of their branch');
+select t.check(t.count_as(:'O', 'select 1 from public.sap_stock') = 3, 'an owner can read it too');
+select t.check(t.count_as(:'J', 'select 1 from public.sap_stock') = 0, 'an admin of another branch cannot read it');
+select t.denied(:'A', format($q$insert into public.sap_stock (snapshot_id, branch_id, part_code, bin, book_qty) values (%L, %L, 'HACK', 'X', 5)$q$, :'sid1', :'BIL'), 'nobody inserts stock lines directly (upload function only)');
+select t.denied(:'A', format($q$update public.sap_stock set book_qty = 999 where snapshot_id = %L$q$, :'sid1'), 'nobody edits stock figures after upload');
+select t.denied(:'A', format($q$insert into public.sap_snapshots (branch_id, file_name, line_count, part_count, row_count, total_qty, total_value, sensitive_threshold) values (%L, 'x', 1, 1, 1, 1, 1, 1)$q$, :'BIL'), 'nobody creates snapshots directly');
+select t.denied(:'A', format($q$delete from public.sap_snapshots where id = %L$q$, :'sid1'), 'nobody deletes snapshots');
+
+-- who may upload
+select t.import_fails(:'C1', :'BIL', '6696', :'ROWS'::jsonb, '42501', 'a counter cannot upload SAP stock');
+select t.import_fails(:'M', :'BIL', '6696', :'ROWS'::jsonb, '42501', 'a manager cannot upload SAP stock (admin job)');
+select t.import_fails(:'J', :'BIL', '6696', :'ROWS'::jsonb, '42501', 'an admin of another branch cannot upload into Bilaspur');
+do $$ begin
+  perform t.as_anon();
+  begin perform public.import_sap_snapshot(null, 'f', null, '6696', 1, '[]'::jsonb); raise exception 'FAIL - the public key could call the upload function';
+  exception when insufficient_privilege then perform t.back(); perform t.pass('the public key cannot call the upload function'); end;
+end $$;
+
+-- the wrong-branch safety net and bad data
+select t.import_fails(:'A', :'BIL', '7001', :'ROWS'::jsonb, '22023', 'a file for another branch code is refused');
+select t.import_fails(:'A', :'BIL', null, :'ROWS'::jsonb, '22023', 'a file with no branch code is refused');
+select t.import_fails(:'A', :'BIL', '6696', '[]'::jsonb, '22023', 'an empty file is refused');
+select t.import_fails(:'A', :'BIL', '6696', '{"a":1}'::jsonb, '22023', 'data that is not a list is refused');
+select t.import_fails(:'A', :'BIL', '6696', '[{"part_code":"A","bin":"B1","book_qty":1},{"part_code":"A","bin":"B1","book_qty":2}]'::jsonb, '22023', 'the same part twice in one bin is refused');
+select t.import_fails(:'A', :'BIL', '6696', '[{"part_code":"","bin":"B1","book_qty":1}]'::jsonb, '22023', 'a line without a part code is refused');
+select t.import_fails(:'A', :'BIL', '6696', '[{"part_code":"A","bin":"B1"}]'::jsonb, '22023', 'a line without a quantity is refused');
+select t.check((select count(*) from public.sap_snapshots where branch_id = :'BIL') = 1, 'every refused upload left nothing behind (still exactly 1 snapshot)');
+
+-- history: a new upload becomes current, the old one is kept
+select t.import_as(:'A', :'BIL', '6696', :'ROWS'::jsonb) as sid2 \gset
+select t.check((select count(*) from public.sap_snapshots where branch_id = :'BIL') = 2 and (select count(*) from public.sap_snapshots where branch_id = :'BIL' and is_current) = 1, 'a second upload keeps history and exactly one snapshot is current');
+select t.check((select is_current from public.sap_snapshots where id = :'sid2') and not (select is_current from public.sap_snapshots where id = :'sid1'), 'the newest snapshot is the current one');
+select t.check((select count(*) from public.sap_stock where snapshot_id = :'sid1') = 3, 'the older snapshot keeps its lines');
+
+-- the sensitive threshold is a branch setting (owner only)
+select t.no_effect(:'A', format($q$update public.branches set sensitive_threshold = 1 where id = %L$q$, :'BIL'), 'a branch admin cannot change the sensitive threshold');
+select t.allowed(:'O', format($q$update public.branches set sensitive_threshold = 350 where id = %L$q$, :'BIL'), 1, 'an owner can change the sensitive threshold');
+select t.import_as(:'A', :'BIL', '6696', :'ROWS'::jsonb) as sid3 \gset
+select t.check((select array_agg(part_code order by part_code) from public.sap_stock where snapshot_id = :'sid3' and is_sensitive) = array['AF-100', 'SENS-1'], 'a new threshold (350) flags the parts above it at the next upload');
+
+-- audit and the server key
+select t.check((select count(*) from public.audit_log where table_name = 'sap_snapshots' and actor = :'A'::uuid and action = 'INSERT' and branch_id = :'BIL'::uuid) = 3, 'every upload is in the audit log with who did it');
+do $$ declare n bigint; begin
+  perform t.as_service(); select count(*) into n from public.sap_stock; select count(*) into n from public.sap_snapshots; perform t.back();
+  perform t.pass('the server key can read the SAP tables');
+exception when insufficient_privilege then perform t.back(); raise exception 'FAIL - server key cannot read SAP tables: %', sqlerrm; end $$;
+
 select 'ALL DONE' as result;

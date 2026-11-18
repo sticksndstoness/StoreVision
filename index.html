@@ -81,6 +81,8 @@
         </div>
       </div>
 
+      <p id="labelStatus" class="text-[11px] text-slate-400 min-h-[1rem]" role="status" aria-live="polite">Tip: fill the frame with the label and hold steady.</p>
+
       <div class="grid grid-cols-2 gap-2.5">
         <div>
           <label for="partNoInput" class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Part No / SKU</label>
@@ -315,6 +317,7 @@
         <p id="acctNote" class="text-xs text-amber-300"></p>
         <div class="grid grid-cols-2 gap-2">
           <button id="openTeamBtn" type="button" class="hidden px-3 py-3 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-emerald-300"><i class="fa-solid fa-users mr-1.5" aria-hidden="true"></i>Team</button>
+          <button id="openStockBtn" type="button" class="hidden col-span-2 px-3 py-3 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-sky-300"><i class="fa-solid fa-file-arrow-up mr-1.5" aria-hidden="true"></i>SAP stock</button>
           <button id="openBranchesBtn" type="button" class="hidden px-3 py-3 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-300"><i class="fa-solid fa-building mr-1.5" aria-hidden="true"></i>Branches</button>
         </div>
         <button id="signOutBtn" type="button" class="w-full py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200">Sign out</button>
@@ -345,6 +348,45 @@
     </div>
   </div>
 
+
+  <!-- SAP STOCK -->
+  <div id="stockModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="h-stock">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 id="h-stock" class="text-base font-bold text-white"><i class="fa-solid fa-file-arrow-up text-sky-400 mr-2" aria-hidden="true"></i>SAP stock</h3>
+        <button id="closeStockX" type="button" class="text-slate-400 hover:text-white text-lg p-1" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+      <div><label for="stockBranchSelect" class="block text-xs font-semibold text-slate-300 mb-1">Branch</label>
+        <select id="stockBranchSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white"></select></div>
+      <div id="stockCurrent" class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-300"></div>
+
+      <div class="space-y-2">
+        <label class="block text-xs font-semibold text-slate-300">Upload the SAP stock report</label>
+        <label class="cursor-pointer w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm flex items-center justify-center gap-2"><i class="fa-solid fa-file-excel" aria-hidden="true"></i><span>Choose Excel or CSV file</span>
+          <input id="stockFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="sr-only" /></label>
+      </div>
+
+      <div id="stockPreview" class="hidden space-y-2.5">
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1.5 text-xs">
+          <p id="spFile" class="text-white font-semibold break-all"></p>
+          <p id="spBranch" class="font-semibold"></p>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-slate-300">
+            <span>Parts</span><span id="spParts" class="text-right text-white font-semibold"></span>
+            <span>Part / bin lines</span><span id="spLines" class="text-right text-white font-semibold"></span>
+            <span>Bays</span><span id="spBins" class="text-right text-white font-semibold"></span>
+            <span>Sensitive parts</span><span id="spSens" class="text-right text-amber-300 font-semibold"></span>
+          </div>
+        </div>
+        <div><label for="spDate" class="block text-xs font-semibold text-slate-300 mb-1">Report date</label>
+          <input id="spDate" type="date" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-sky-500 focus:outline-none" /></div>
+        <ul id="spErrors" class="space-y-1 text-xs text-rose-300"></ul>
+        <ul id="spWarnings" class="space-y-1 text-xs text-amber-300"></ul>
+        <button id="stockUploadBtn" type="button" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm disabled:opacity-50">Upload</button>
+      </div>
+      <p id="stockMsg" class="text-xs min-h-[1rem]" role="alert"></p>
+    </div>
+  </div>
+
   <!-- BRANCHES -->
   <div id="branchesModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="h-branches">
     <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
@@ -372,10 +414,15 @@
 
   <script src="js/config.js"></script>
   <script src="vendor/supabase/supabase.js"></script>
+  <script src="vendor/readxlsx/read-excel-file.min.js"></script>
+  <script src="vendor/zxing/zxing.min.js"></script>
+  <script src="js/scan.js"></script>
+  <script src="js/sap.js"></script>
   <script src="js/core.js"></script>
   <script src="js/db.js"></script>
   <script src="js/cloud.js"></script>
   <script src="js/app.js"></script>
   <script src="js/team.js"></script>
+  <script src="js/stock.js"></script>
 </body>
 </html>

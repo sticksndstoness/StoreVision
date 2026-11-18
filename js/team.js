@@ -39,6 +39,7 @@
     $('acctNote').textContent = noAccess ? 'This login is not set up for any branch yet. Ask an admin to add you.' : '';
     $('openTeamBtn').classList.toggle('hidden', !C.canOpenTeam(ctx));
     $('openBranchesBtn').classList.toggle('hidden', !C.canOpenBranches(ctx));
+    $('openStockBtn').classList.toggle('hidden', !C.canUploadSap(ctx));
   }
 
   async function doLogin() {

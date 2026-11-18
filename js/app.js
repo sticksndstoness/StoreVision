@@ -222,7 +222,7 @@
   }
 
   /* ---------- image ---------- */
-  function compressImage(file, maxDim = 1280) {
+  function compressImage(file, maxDim = 1280, opts = {}) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(new Error('Could not read that photo.'));
@@ -238,8 +238,27 @@
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
           canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          resolve({ dataUrl, base64: dataUrl.split(',')[1] });
+          const dataUrl = canvas.toDataURL('image/jpeg', opts.quality || 0.85);
+          const out = { dataUrl, base64: dataUrl.split(',')[1], width: w, height: h };
+          if (opts.previewDim) {                                       // a small copy for the screen; the full-size one goes to the reader
+            const f = Math.min(1, opts.previewDim / Math.max(w, h)); const pc = document.createElement('canvas');
+            pc.width = Math.max(1, Math.round(w * f)); pc.height = Math.max(1, Math.round(h * f));
+            pc.getContext('2d').drawImage(canvas, 0, 0, pc.width, pc.height); out.preview = pc.toDataURL('image/jpeg', 0.8);
+          }
+          if (opts.wantPixels) { try { out.pixels = canvas.getContext('2d').getImageData(0, 0, w, h); } catch (e) { out.pixels = null; } }
+          if (opts.wantFullPixels) {                                   // original resolution (capped), made only when needed: small barcodes need every pixel
+            out.fullPixels = () => {
+              try {
+                const cap = 4096; const f = Math.min(1, cap / Math.max(img.width, img.height));
+                const fw = Math.round(img.width * f), fh = Math.round(img.height * f);
+                if (fw <= w && fh <= h) return null;                   // nothing sharper than what we already have
+                const c = document.createElement('canvas'); c.width = fw; c.height = fh;
+                const cx = c.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, fw, fh);
+                return cx.getImageData(0, 0, fw, fh);
+              } catch (e) { return null; }
+            };
+          }
+          resolve(out);
         };
         img.src = e.target.result;
       };
@@ -264,7 +283,13 @@
     },
     required: ['bayTag', 'items']
   };
-  const LABEL_PROMPT = 'Extract spare part or product label details from this image. If a field is not visible use an empty string (or 0 for mrp). mrp is the numeric MRP without currency symbol. mfgDate looks like 08/2026.';
+  const LABEL_PROMPT = `Read the spare part label in this photo. The label may be small in the picture; read only the label.
+- partNo: the code printed after "PART NO" (for example PHJ00006).
+- description: the text after "DESC" (for example FUEL WATER SEPARATOR SPIN ON).
+- barcode: the serial text printed directly under the barcode (for example CBL0NL0050). Empty string if you cannot read it.
+- mrp: the number after "MRP: Rs." without currency symbol (for example 3470.00).
+- mfgDate: the month/year after "MANUFACTURED ON" (for example 11/2026).
+If a field is not clearly readable, use an empty string (or 0 for mrp). Do NOT guess.`;
   const stackPrompt = (focusCenter) => `You are a warehouse inventory vision counter.
 1. Read any rack bay label or zone sticker visible on the shelving uprights (e.g. D1, D2, A1, ZONE-1). Empty string if none.
 2. Detect every individual stacked box, carton, bucket, or product unit ${focusCenter ? 'in the primary foreground/center rack or stack (ignore distant background aisles and loose floor debris)' : 'visible in the image'}.
@@ -318,25 +343,61 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
   }
 
   /* ---------- label scan ---------- */
+  const LABEL_MAX_DIM = 2560;   // labels are often small in the frame: send/scan them sharp (the old 1024 made the text unreadable)
+
+  function labelStatus(msg, kind) {   // a message that stays on screen (a toast vanishes before you can read it)
+    const el = $('labelStatus'); if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'text-[11px] min-h-[1rem] ' + (kind === 'good' ? 'text-emerald-300' : kind === 'warn' ? 'text-amber-300' : kind === 'bad' ? 'text-rose-300' : 'text-slate-400');
+  }
+
   async function handleLabelFile(input) {
     const file = input.files && input.files[0];
     input.value = ''; // allow re-selecting the same photo
     if (!file || busy.label) return;
-    busy.label = true;
+    busy.label = true; labelStatus('Reading the label…');
     try {
-      const { dataUrl, base64 } = await compressImage(file, 1024);
+      const img = await compressImage(file, LABEL_MAX_DIM, { quality: 0.9, previewDim: 900, wantPixels: true, wantFullPixels: true });
       $('labelPreviewWrap').classList.remove('hidden');
-      $('labelPreviewImg').src = dataUrl;
+      $('labelPreviewImg').src = img.preview || img.dataUrl;
       $('labelScanningOverlay').classList.remove('hidden');
-      const data = await callGemini(base64, LABEL_PROMPT, LABEL_SCHEMA);
-      if (data.partNo) $('partNoInput').value = data.partNo;
-      if (data.description) $('descInput').value = data.description;
-      if (data.barcode) $('barcodeInput').value = data.barcode;
-      if (data.mrp > 0) $('mrpInput').value = data.mrp;
-      if (data.mfgDate) $('mfgInput').value = data.mfgDate;
+
+      // two independent readers at the same time: the barcode scanner (on the phone, free, exact) and the AI (everything else)
+      const yieldUi = () => new Promise((r) => setTimeout(r, 0));
+      const scanP = (async () => {
+        const has1D = (r) => r.some((c) => c.format !== 'QR_CODE' && c.format !== 'DATA_MATRIX');
+        let res = img.pixels ? await SVScan.decode(img.pixels.data, img.pixels.width, img.pixels.height, { maxMs: 1800, yield: yieldUi }) : [];
+        if (!has1D(res) && img.fullPixels) {                          // quick pass found no barcode: look again at the original resolution
+          const full = img.fullPixels();
+          if (full) { const more = await SVScan.decode(full.data, full.width, full.height, { maxMs: 4000, yield: yieldUi }); const have = new Set(res.map((c) => c.text)); res = res.concat(more.filter((c) => !have.has(c.text))); }
+        }
+        return res;
+      })().catch(() => []);
+      const aiP = callGemini(img.base64, LABEL_PROMPT, LABEL_SCHEMA).then((d) => ({ d }), (e) => ({ e }));
+      const [codes, ai] = await Promise.all([scanP, aiP]);
+
+      const d = ai.d || {}; const filled = [];
+      const barcode = SVScan.pickBarcode(codes) || (d.barcode || '').trim();
+      if (d.partNo) { $('partNoInput').value = d.partNo; filled.push('Part No'); }
+      if (d.description) { $('descInput').value = d.description; filled.push('Description'); }
+      if (barcode) { $('barcodeInput').value = barcode; filled.push(SVScan.pickBarcode(codes) ? 'Barcode (scanned)' : 'Barcode'); }
+      if (d.mrp > 0) { $('mrpInput').value = d.mrp; filled.push('MRP'); }
+      if (d.mfgDate) { $('mfgInput').value = d.mfgDate; filled.push('Mfg date'); }
       recalculateTotals();
-      showToast('Label details extracted — please verify them');
-    } catch (err) { showToast(err.message); }
+
+      const seen = codes.length ? ' Codes seen: ' + codes.map((c) => c.text.slice(0, 40)).join(' · ') + '.' : '';
+      if (ai.e && !filled.length) {
+        labelStatus('Could not read this label. ' + ai.e.message + ' Move closer so the label fills the frame, hold steady, and try again.' + seen, 'bad'); showToast(ai.e.message);
+      } else if (ai.e) {
+        labelStatus('Read: ' + filled.join(', ') + '. The AI could not read the rest (' + ai.e.message + '). Fill in the other boxes by hand.' + seen, 'warn'); showToast(ai.e.message);
+      } else if (!filled.length) {
+        labelStatus('Nothing could be read from this photo. Move closer so the label fills the frame, avoid glare, hold steady and try again.' + seen, 'bad'); showToast('Nothing could be read from this photo');
+      } else {
+        const missing = ['Part No', 'Barcode', 'MRP'].filter((f) => !filled.some((x) => x.startsWith(f)));
+        labelStatus('Read: ' + filled.join(', ') + '.' + (missing.length ? ' Not found: ' + missing.join(', ') + ' — please fill in.' : ' Please check them.') + seen, missing.length ? 'warn' : 'good');
+        showToast('Label read — please verify the details');
+      }
+    } catch (err) { labelStatus(err.message, 'bad'); showToast(err.message); }
     finally { busy.label = false; $('labelScanningOverlay').classList.add('hidden'); }
   }
 
@@ -477,7 +538,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     pins = []; aiCounted = false; currentStackBase64 = null; zoneManual = false;
     $('stackImg').removeAttribute('src'); $('stackImg').classList.add('hidden');
     $('stackPlaceholder').classList.remove('hidden'); $('pinControls').classList.add('hidden');
-    $('labelPreviewWrap').classList.add('hidden'); $('labelPreviewImg').removeAttribute('src');
+    $('labelPreviewWrap').classList.add('hidden'); $('labelPreviewImg').removeAttribute('src'); labelStatus('Tip: fill the frame with the label and hold steady.');
     renderPins(); // zone is intentionally kept: next SKU is usually on the same rack
     clearTimeout(draftTimer); SVDB.clearDraft().catch(() => {});
   }
