@@ -82,7 +82,7 @@
   };
 
   SVCloud.listBranches = async function () {
-    init(); const { data, error } = await client.from('branches').select('id, code, name, active').order('name');
+    init(); const { data, error } = await client.from('branches').select('id, code, name, active, sensitive_threshold').order('name');
     if (error) fail(error); return data || [];
   };
   SVCloud.addBranch = async function (name, code) {
@@ -109,6 +109,32 @@
   }
   SVCloud.setRole = (u, b, role) => updateMembership(u, b, { role });
   SVCloud.setMemberActive = (u, b, active) => updateMembership(u, b, { active });
+
+  /* ---------- SAP stock snapshots ---------- */
+  SVCloud.currentSnapshot = async function (branchId) {
+    init();
+    const { data, error } = await client.from('sap_snapshots').select('id, file_name, report_date, line_count, part_count, row_count, uploaded_at, sensitive_threshold').eq('branch_id', branchId).eq('is_current', true).limit(1);
+    if (error) fail(error);
+    return data && data[0] ? data[0] : null;
+  };
+  /** Upload parsed rows. The server re-checks the branch code, the caller's role and every row, and stores it all-or-nothing. */
+  SVCloud.importSap = async function ({ branchId, fileName, reportDate, branchCode, lineCount, rows }) {
+    init();
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
+    try {
+      const payload = rows.map((r) => ({ part_code: r.part_code, bin: r.bin, description: r.description, uom: r.uom, book_qty: r.book_qty, available_qty: r.available_qty, blocked_qty: r.blocked_qty, unit_cost: r.unit_cost, mrp: r.mrp }));
+      const { data, error } = await client.rpc('import_sap_snapshot', { p_branch: branchId, p_file_name: fileName, p_report_date: reportDate || null, p_branch_code: branchCode, p_line_count: lineCount, p_rows: payload }).abortSignal(ctl.signal);
+      if (error) {
+        if (error.code === '22023') throw new Error(error.message);              // our own plain-language refusals (wrong branch, bad data)
+        fail(error);
+      }
+      return data;
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || /abort/i.test(e.message || ''))) throw new Error('The upload took too long. Check the internet and try again; nothing was saved.');
+      if (e instanceof Error && !/^[A-Z]?[a-z]+Error$/.test(e.name || '') && e.message) throw e;
+      throw new Error(friendly(e));
+    } finally { clearTimeout(timer); }
+  };
 
   async function callTeam(action, payload) {
     init();

@@ -204,3 +204,10 @@ Whichever you pick, keep the local outbox so counting works with poor warehouse 
 - Price sensitivity: using **unit Cost > ₹10,000** flags roughly 135 parts (≈46% of stock value); using **MRP > ₹10,000** flags roughly 270.
   The threshold basis (Cost vs MRP) will be a setting; Cost is the default because it is what a loss actually costs you.
 - Material types seen: `ZSPD`, `ZLOC`, `ZCON` (consumables/lubricants). Lubricants count in litres.
+
+
+---
+
+## 8. Build status
+- Done: hardening; Supabase foundation (branches, roles, audit); sign-in, Team and Branches screens; **SAP stock upload** (reader, safety checks, all-or-nothing import, blind-count permissions).
+- Next: blind count lists and entry (counters) -> comparison and shortage/excess report -> recount and approval -> issue/return register -> weekly plan and report.

@@ -193,6 +193,7 @@
   };
   SVCore.canOpenTeam = (ctx) => SVCore.isOwner(ctx) || SVCore.adminBranches(ctx).length > 0;
   SVCore.canOpenBranches = (ctx) => SVCore.isOwner(ctx);
+  SVCore.canUploadSap = (ctx) => SVCore.isOwner(ctx) || SVCore.adminBranches(ctx).length > 0;
   SVCore.rolesAssignable = function (ctx, branchId) {
     if (SVCore.isOwner(ctx)) return ['admin', 'manager', 'counter'];
     if (SVCore.adminBranches(ctx).some((m) => m.branch_id === branchId)) return ['manager', 'counter'];
