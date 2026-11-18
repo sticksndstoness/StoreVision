@@ -12,7 +12,7 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <title>StoreVision Count — Smart Inventory</title>
   <!-- No third-party scripts or styles: everything is served from this origin (works offline, nothing to hijack). -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com https://script.google.com https://*.googleusercontent.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com https://script.google.com https://*.googleusercontent.com https://nobfqrutkoumhuakptje.supabase.co wss://nobfqrutkoumhuakptje.supabase.co; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <link rel="stylesheet" href="css/tailwind.css" />
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
   <link rel="stylesheet" href="css/style.css" />
@@ -45,6 +45,7 @@
       <span id="syncIndicator" class="hidden text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
         <i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>Sheet Linked
       </span>
+      <button id="accountBtn" type="button" class="w-11 h-11 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-sky-300 flex items-center justify-center" aria-label="Account"><span id="accountBtnLabel"><i class="fa-solid fa-user" aria-hidden="true"></i></span></button>
       <button id="openSettingsBtn" type="button" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-amber-400 flex items-center gap-1.5">
         <i class="fa-solid fa-gear" aria-hidden="true"></i> Setup
       </button>
@@ -289,14 +290,92 @@
     </div>
   </div>
 
+
+  <!-- ACCOUNT -->
+  <div id="accountModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="h-account">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 id="h-account" class="text-base font-bold text-white"><i class="fa-solid fa-user text-sky-400 mr-2" aria-hidden="true"></i>Account</h3>
+        <button id="closeAccountX" type="button" class="text-slate-400 hover:text-white text-lg p-1" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+
+      <div id="acctSignedOut" class="space-y-3">
+        <div><label for="loginEmail" class="block text-xs font-semibold text-slate-300 mb-1">Email</label>
+          <input id="loginEmail" type="email" autocomplete="username" inputmode="email" autocapitalize="none" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-sky-500 focus:outline-none" /></div>
+        <div><label for="loginPassword" class="block text-xs font-semibold text-slate-300 mb-1">Password / PIN</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-sky-500 focus:outline-none" /></div>
+        <button id="loginBtn" type="button" class="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm disabled:opacity-60">Sign in</button>
+        <p id="loginMsg" class="text-xs text-rose-300 min-h-[1rem]" role="alert"></p>
+        <p class="text-[11px] text-slate-500">Counting on this phone works without signing in. Signing in is for admins and managers.</p>
+      </div>
+
+      <div id="acctSignedIn" class="hidden space-y-3">
+        <div><p id="acctName" class="text-sm font-bold text-white"></p><p id="acctEmail" class="text-xs text-slate-400"></p></div>
+        <ul id="acctRoles" class="space-y-1.5"></ul>
+        <p id="acctNote" class="text-xs text-amber-300"></p>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="openTeamBtn" type="button" class="hidden px-3 py-3 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-emerald-300"><i class="fa-solid fa-users mr-1.5" aria-hidden="true"></i>Team</button>
+          <button id="openBranchesBtn" type="button" class="hidden px-3 py-3 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-300"><i class="fa-solid fa-building mr-1.5" aria-hidden="true"></i>Branches</button>
+        </div>
+        <button id="signOutBtn" type="button" class="w-full py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEAM -->
+  <div id="teamModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="h-team">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 id="h-team" class="text-base font-bold text-white"><i class="fa-solid fa-users text-emerald-400 mr-2" aria-hidden="true"></i>Team</h3>
+        <button id="closeTeamX" type="button" class="text-slate-400 hover:text-white text-lg p-1" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+      <div><label for="teamBranchSelect" class="block text-xs font-semibold text-slate-300 mb-1">Branch</label>
+        <select id="teamBranchSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white"></select></div>
+      <div id="teamList" class="space-y-2"></div>
+      <div class="border-t border-slate-800 pt-3 space-y-2.5">
+        <h4 class="text-xs font-bold text-slate-200">Add a person</h4>
+        <input id="newName" type="text" autocomplete="off" placeholder="Full name" aria-label="Full name" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none" />
+        <input id="newEmail" type="email" autocomplete="off" inputmode="email" autocapitalize="none" placeholder="Email (their login)" aria-label="Email" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none" />
+        <select id="newRole" aria-label="Role" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white"></select>
+        <input id="newPassword" type="text" autocomplete="off" placeholder="Set a password or PIN for them" aria-label="Password or PIN" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none" />
+        <p id="pwHint" class="text-[11px] text-slate-500"></p>
+        <button id="addPersonBtn" type="button" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm disabled:opacity-60">Add person</button>
+        <p id="teamMsg" class="text-xs min-h-[1rem]" role="alert"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- BRANCHES -->
+  <div id="branchesModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="h-branches">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 id="h-branches" class="text-base font-bold text-white"><i class="fa-solid fa-building text-amber-400 mr-2" aria-hidden="true"></i>Branches</h3>
+        <button id="closeBranchesX" type="button" class="text-slate-400 hover:text-white text-lg p-1" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+      <div id="branchList" class="space-y-2"></div>
+      <div class="border-t border-slate-800 pt-3 space-y-2.5">
+        <h4 class="text-xs font-bold text-slate-200">Add a branch</h4>
+        <input id="newBranchName" type="text" autocomplete="off" placeholder="Branch name, e.g. Jhajjar" aria-label="Branch name" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none" />
+        <input id="newBranchCode" type="text" autocomplete="off" autocapitalize="characters" placeholder="SAP branch code (from the stock report)" aria-label="SAP branch code" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-mono text-white focus:border-amber-500 focus:outline-none" />
+        <p class="text-[11px] text-slate-500">The code cannot be changed later. It is used to stop one branch's SAP file being loaded into another.</p>
+        <button id="addBranchBtn" type="button" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm disabled:opacity-60">Add branch</button>
+        <p id="branchMsg" class="text-xs min-h-[1rem]" role="alert"></p>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast (supports an optional action button, e.g. Undo) -->
   <div id="toast" role="status" aria-live="polite" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] max-w-[92vw] bg-slate-800 border border-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-3">
     <span id="toastMsg"></span>
     <button id="toastAction" type="button" class="hidden text-amber-300 underline font-bold"></button>
   </div>
 
+  <script src="js/config.js"></script>
+  <script src="vendor/supabase/supabase.js"></script>
   <script src="js/core.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/team.js"></script>
 </body>
 </html>

@@ -24,7 +24,18 @@ select public.bootstrap_owner('you@example.com', 'Your Name');
 ```
 Jhajjar and Jharli are added later from the app by an owner - no code change.
 
-## 4. Send me
+## 4. Deploy the team function (lets you add people from the app)
+The app creates logins through a small server function, because creating a login needs a key that must never be in a phone or browser.
+1. Open **Edge Functions**. If `team-admin` is already listed (the GitHub link may deploy it), skip to step 4.
+2. Otherwise click **Deploy a new function → Via Editor**, name it exactly `team-admin`.
+3. Replace the editor contents with the whole of `supabase/functions/team-admin/index.ts` from the repo, then **Deploy**.
+4. Open the function's settings and switch **Verify JWT** OFF (the function checks who is calling by itself). Save.
+Nothing to configure: Supabase gives the function its own server key automatically. Change the function only by editing `tools/team-admin.handler.ts` or `supabase/functions/team-admin/logic.mjs` and running `npm run build:fn`.
+
+## 5. Sign in to the app
+Open the app → the person icon → sign in with the owner email and password → **Branches** to add Jhajjar and Jharli (type their SAP branch codes) → **Team** to add the manager, admins and helpers.
+
+## 6. Send me
 - **Project URL** (`https://xxxx.supabase.co`)
 - **Publishable (or anon) key**
 

@@ -180,6 +180,51 @@
     return { ok: true };
   };
 
+
+  /* ---------- accounts / teams (client-side mirror of the server rules; the database + Edge Function are the real enforcement) ---------- */
+  SVCore.ROLES = ['admin', 'manager', 'counter'];
+  SVCore.ROLE_LABEL = { admin: 'Admin', manager: 'Manager', counter: 'Helper' };
+
+  /** ctx = { profile: {is_owner, active}, memberships: [{branch_id, role, active, branch:{...}}] } */
+  SVCore.isOwner = (ctx) => !!(ctx && ctx.profile && ctx.profile.active && ctx.profile.is_owner);
+  SVCore.adminBranches = function (ctx) {
+    if (!ctx) return [];
+    return (ctx.memberships || []).filter((m) => m.active && m.role === 'admin' && m.branch && m.branch.active !== false);
+  };
+  SVCore.canOpenTeam = (ctx) => SVCore.isOwner(ctx) || SVCore.adminBranches(ctx).length > 0;
+  SVCore.canOpenBranches = (ctx) => SVCore.isOwner(ctx);
+  SVCore.rolesAssignable = function (ctx, branchId) {
+    if (SVCore.isOwner(ctx)) return ['admin', 'manager', 'counter'];
+    if (SVCore.adminBranches(ctx).some((m) => m.branch_id === branchId)) return ['manager', 'counter'];
+    return [];
+  };
+  /** Same rule as the server: helpers may use a 6-character PIN, everyone else needs 8+. */
+  SVCore.minPasswordLength = (role) => (role === 'counter' ? 6 : 8);
+  SVCore.validateNewPerson = function (i) {
+    i = i || {};
+    const full_name = String(i.full_name == null ? '' : i.full_name).trim();
+    const email = String(i.email == null ? '' : i.email).trim().toLowerCase();
+    const role = String(i.role || ''); const password = typeof i.password === 'string' ? i.password : '';
+    if (!full_name || full_name.length > 80) return { ok: false, error: 'Enter the person\'s name.' };
+    if (!/^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[A-Za-z]{2,}$/.test(email)) return { ok: false, error: 'Enter a valid email address.' };
+    if (!SVCore.ROLES.includes(role)) return { ok: false, error: 'Choose a role.' };
+    if (!i.branch_id) return { ok: false, error: 'Choose a branch.' };
+    if (password.length < SVCore.minPasswordLength(role)) return { ok: false, error: `Password/PIN must be at least ${SVCore.minPasswordLength(role)} characters.` };
+    return { ok: true, value: { full_name, email, role, branch_id: i.branch_id, password } };
+  };
+  SVCore.validateNewBranch = function (i) {
+    i = i || {};
+    const name = String(i.name == null ? '' : i.name).trim();
+    const code = String(i.code == null ? '' : i.code).trim().toUpperCase();
+    if (!name || name.length > 60) return { ok: false, error: 'Enter the branch name.' };
+    if (!/^[A-Z0-9-]{2,20}$/.test(code)) return { ok: false, error: 'The SAP branch code should be letters/numbers only (for example 6696).' };
+    return { ok: true, value: { name, code } };
+  };
+  SVCore.initials = function (name) {
+    const p = String(name || '').trim().split(/\s+/).filter(Boolean);
+    return ((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+  };
+
   SVCore.makeId = function () {
     return 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   };

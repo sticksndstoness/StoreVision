@@ -3,3 +3,7 @@ project_id = "storevision"
 
 [api]
 schemas = ["public"]
+
+# The function authenticates the caller itself (auth.getUser) and enforces roles in logic.mjs, which also works with the new publishable keys.
+[functions.team-admin]
+verify_jwt = false
