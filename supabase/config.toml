@@ -1,0 +1,5 @@
+# Supabase CLI / GitHub-integration project settings. Migrations in ./migrations are applied in filename order.
+project_id = "storevision"
+
+[api]
+schemas = ["public"]

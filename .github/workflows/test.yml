@@ -18,4 +18,8 @@ jobs:
       - name: Compiled CSS must be up to date
         run: npm run build:css && git diff --exit-code css/tailwind.css
       - run: npm test
+      - name: Database permission tests (throwaway PostgreSQL)
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb >/dev/null 2>&1 || sudo apt-get install -y postgresql
+          npm run test:db
       - run: npm run test:browser
