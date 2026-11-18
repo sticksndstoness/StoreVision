@@ -33,6 +33,9 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 - Hardened delivery: no third-party scripts, styles or fonts; a Content-Security-Policy restricts what the page can load or call; the app starts offline.
 - AI calls are rate-limited (1 per second, 400 per day) to avoid runaway taps and surprise bills.
 
+## Shared backend (in progress)
+The multi-branch, role-based backend (Supabase) is being added in steps. Setup instructions: `docs/SUPABASE_SETUP.md`. Database rules live in `supabase/migrations/` and are tested with `npm run test:db`.
+
 ## Choosing the Gemini model
 Setup → **Gemini Model** is a dropdown. The default is `gemini-3.8-flash`. Tap **Check available models** to ask Google which models your key can use (works in direct mode, or in proxy mode via the script), pick one, and Save. Choose *Custom model ID…* to type any ID. If Google retires a model, the error message tells you to come back here.
 

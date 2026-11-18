@@ -6,7 +6,8 @@
     "build:css": "tailwindcss -i css/tailwind.src.css -o css/tailwind.css --minify",
     "test": "node tests/core.test.js",
     "test:browser": "node tests/e2e.js && node tests/log.js && node tests/models.js && node tests/header.js && node tests/hardening.js",
-    "test:all": "npm test && npm run test:browser"
+    "test:all": "npm test && npm run test:db && npm run test:browser",
+    "test:db": "bash tests/db/run.sh"
   },
   "devDependencies": {
     "@fortawesome/fontawesome-free": "^6.5.1",
