@@ -7,20 +7,22 @@ Authentication → Sign In / Providers → **Email**:
 - Turn **off** "Allow new users to sign up" (people are added by an admin, never self-registered).
 - Leave "Confirm email" as you like; users you create below are auto-confirmed.
 
-## 2. Apply the database setup
-Pick one:
-- **Automatic (GitHub link):** the files in `supabase/migrations/` are applied when this repository's `main` branch changes. Check Project Settings → Integrations → GitHub that it points at `sticksndstoness/StoreVision`, branch `main`, directory `supabase`.
-- **Manual:** open **SQL Editor**, paste the contents of `supabase/migrations/20261118000001_foundation.sql`, run it. Do this for each later migration file, in order.
+## 2. Apply the database setup (automatic)
+Project Settings → Integrations → GitHub:
+- Repository `sticksndstoness/StoreVision`, working directory `.`
+- Turn **Deploy to production** ON, production branch name `main`, Save.
+
+From then on, every change merged into `main` under `supabase/migrations/` is applied to the database automatically
+(this also creates the Bilaspur branch, code 6696). Do **not** also paste migrations by hand once this is on.
+*Fallback if it ever does not apply:* SQL Editor → paste the migration files in filename order → Run.
 
 ## 3. Create yourself as the first owner
 1. Authentication → Users → **Add user** → your email + a strong password → tick *Auto Confirm User*.
-2. SQL Editor, run (replace the email and name):
+2. SQL Editor, run once (your email and name):
 ```sql
 select public.bootstrap_owner('you@example.com', 'Your Name');
-insert into public.branches (code, name) values ('6696', 'Bilaspur');
 ```
-`6696` is the SAP *Branch Code* printed in the stock report; uploads will be checked against it so the wrong branch's file cannot be loaded by mistake.
-Jhajjar and Jharli are added later from the app by an owner (or with the same `insert`) — no code change.
+Jhajjar and Jharli are added later from the app by an owner - no code change.
 
 ## 4. Send me
 - **Project URL** (`https://xxxx.supabase.co`)
