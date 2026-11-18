@@ -56,7 +56,6 @@ end $$;
 \set Z '00000000-0000-0000-0000-0000000000a7'
 \set X '00000000-0000-0000-0000-0000000000a8'
 \set O2 '00000000-0000-0000-0000-0000000000a9'
-\set BIL '10000000-0000-0000-0000-000000000001'
 \set JHA '10000000-0000-0000-0000-000000000002'
 
 insert into auth.users (id, email) select u, 'u' || right(u::text, 2) || '@example.test'
@@ -65,7 +64,9 @@ select public.bootstrap_owner('ua1@example.test', 'Owner One');
 insert into public.profiles (user_id, full_name, active) values
   (:'A', 'Admin Bil', true), (:'M', 'Manager Bil', true), (:'C1', 'Counter 1', true), (:'C2', 'Counter 2', true),
   (:'J', 'Admin Jha', true), (:'Z', 'No Branch', true), (:'X', 'Left Company', false);
-insert into public.branches (id, code, name) values (:'BIL', '6696', 'Bilaspur'), (:'JHA', '7001', 'Jhajjar');
+-- Bilaspur comes from the seed migration; look its id up instead of inserting it
+select id as "BIL" from public.branches where code = '6696' \gset
+insert into public.branches (id, code, name) values (:'JHA', '7001', 'Jhajjar');
 insert into public.memberships (user_id, branch_id, role) values
   (:'A', :'BIL', 'admin'), (:'M', :'BIL', 'manager'), (:'C1', :'BIL', 'counter'), (:'C2', :'BIL', 'counter'),
   (:'J', :'JHA', 'admin'), (:'X', :'BIL', 'counter');
@@ -132,6 +133,7 @@ select t.denied(:'A', 'delete from public.audit_log', 'audit log cannot be delet
 select t.denied(:'O', 'update public.audit_log set action = ''x''', 'audit log cannot be altered even by the owner');
 
 -- ------------------------------------------------------------------ owner
+select t.check((select count(*) from public.branches where code = '6696') = 1, 'seed migration created Bilaspur (code 6696) exactly once');
 select t.check(t.count_as(:'O', 'select 1 from public.branches') = 2, 'owner sees every branch');
 select t.allowed(:'O', format($q$insert into public.branches (code, name) values ('7002', 'Jharli')$q$), 1, 'owner can add a new branch (Jharli)');
 select t.check(t.count_as(:'O', 'select 1 from public.branches') = 3, 'new branch appears for the owner with no code change');
