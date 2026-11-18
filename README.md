@@ -40,7 +40,7 @@ Mobile web app for stock counting: photograph a part label (Gemini reads Part No
 The multi-branch, role-based backend (Supabase) is being added in steps. Setup instructions: `docs/SUPABASE_SETUP.md`. Database rules live in `supabase/migrations/` and are tested with `npm run test:db`.
 
 ## Label scanning
-Step 1 reads the label two ways at once: the **barcode / QR scanner** (on the phone, free, exact, works offline; if no barcode is found at normal size it looks again at the photo's original resolution) and the **AI** (part no, description, MRP, mfg date). Labels are sent to the AI at up to 2560 px, because the text on a label that is small in the frame is unreadable at 1024 px. The result stays on screen under the photo: what was read, what was not, which codes were seen, and the exact reason if the AI failed. The barcode box is filled from the scanner whenever it finds a code, even if the AI is down or has no key.
+Step 1 sends the label photo to the AI (1600 px, the first version's simple prompt and request) and **shows the result as soon as the AI answers**. The on-device **barcode / QR scanner** then runs in the background, never delays the screen, and fills the Barcode box when it finds a code (it never overwrites something typed by hand; a small barcode is re-read from the photo's original resolution). Switch the scanner off in Setup if a phone feels slow. The message under the photo stays on screen: what was read, what is missing, codes seen, the exact AI error, and the timing (AI / scan / photo size / model) so slowness can be diagnosed.
 
 ## SAP stock upload (admins / owners)
 Account → **SAP stock** → choose the branch → choose the SAP *Stock Report* (.xlsx or .csv). The app shows what it found and blocks the upload if anything is unsafe:

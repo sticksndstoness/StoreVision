@@ -32,25 +32,50 @@ const jpegLongSide = (b64) => { const b = Buffer.from(b64, 'base64'); let i = 2;
   await new Promise((r) => srv.listen(0, r)); const base = 'http://localhost:' + srv.address().port + '/';
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' }); const pg = await ctx.newPage();
   const errs = [], csp = []; pg.on('pageerror', (e) => errs.push(e.message)); pg.on('console', (m) => { if (/Content Security Policy|violates the following/i.test(m.text())) csp.push(m.text()); });
-  let mode = 'good', sentWidth = 0;
+  let mode = 'good', sentWidth = 0, lastReq = null, aiDelayMs = 0;
   const GOOD = { partNo: 'PHJ00006', description: 'FUEL WATER SEPARATOR SPIN ON', barcode: '', mrp: 3470, mfgDate: '11/2026' };
   await ctx.route('**/generativelanguage.googleapis.com/**', (r) => {
-    const body = JSON.parse(r.request().postData()); sentWidth = jpegLongSide(body.contents[0].parts[1].inline_data.data);
+    const body = JSON.parse(r.request().postData()); lastReq = body; sentWidth = jpegLongSide(body.contents[0].parts[1].inline_data.data);
     if (mode === 'error') return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Model overloaded' } }) });
     const payload = mode === 'empty' ? { partNo: '', description: '', barcode: '', mrp: 0, mfgDate: '' } : GOOD;
     r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }) });
   });
-  const fresh = async (key = true) => { await pg.goto(base); await pg.waitForFunction(READY); await pg.evaluate((k) => { k ? localStorage.setItem('sv_gemini_key', 'K') : localStorage.removeItem('sv_gemini_key'); }, key); await pg.reload(); await pg.waitForFunction(READY); };
-  const scan = async (file) => { await pg.setInputFiles('#labelGallery', file); await pg.waitForFunction(() => !document.getElementById('labelStatus').textContent.startsWith('Reading') && !document.getElementById('labelStatus').textContent.startsWith('Tip'), null, { timeout: 40000 }); };
+  const fresh = async (key = true) => { await pg.goto(base); await pg.waitForFunction(READY); await pg.evaluate(async (k) => { k ? localStorage.setItem('sv_gemini_key', 'K') : localStorage.removeItem('sv_gemini_key'); localStorage.removeItem('sv_scanner'); localStorage.removeItem('sv_ai_count'); await SVDB.clearDraft(); }, key); await pg.reload(); await pg.waitForFunction(READY); await pg.waitForTimeout(1100); /* the AI rate guard needs >=1 s between calls */ };
+  const scan = async (file) => { await pg.setInputFiles('#labelGallery', file); await pg.waitForFunction(() => { const t = document.getElementById('labelStatus').textContent; return !t.startsWith('Reading the label') && !t.startsWith('Tip') && !t.includes('in the background'); }, null, { timeout: 60000 }); };
   const val = (id) => pg.inputValue('#' + id); const status = () => pg.locator('#labelStatus').innerText();
 
   /* 1. everything works: small label in a big photo */
   await fresh(); mode = 'good'; await scan(big);
   ok((await val('barcodeInput')) === 'CBL0NL0050', 'the 1-D barcode was read ON THE PHONE (no AI needed): CBL0NL0050');
   ok((await val('partNoInput')) === 'PHJ00006' && (await val('mrpInput')) === '3470' && (await val('mfgInput')) === '11/2026' && (await val('descInput')).includes('FUEL WATER'), 'the AI filled part no, description, MRP and mfg date');
-  ok(sentWidth >= 2500, 'the photo sent to the AI is sharp (longest side ' + sentWidth + 'px; it was 1024 before)');
+  ok(sentWidth === 1600, 'the photo sent to the AI is 1600 px on its longest side (' + sentWidth + '): sharper than the first version, far smaller than 2560');
+  const gc = lastReq.generationConfig, prompt = lastReq.contents[0].parts[0].text;
+  ok(!('responseSchema' in gc) && !('maxOutputTokens' in gc) && gc.responseMimeType === 'application/json', "the label request has the first version's simple shape (no rigid schema)");
+  ok(prompt.startsWith('Extract spare part or product label details') && !prompt.includes('Do NOT guess'), "the first version's prompt is back and the restrictive 'do NOT guess' is gone");
+  ok(/AI \d+\.\ds/.test(await status()) && (await status()).includes('scan ') && (await status()).includes('gemini-3.8-flash'), 'the status shows how long the AI and the scanner took, and which model');
   ok((await status()).includes('Barcode (scanned)') && (await status()).includes('Codes seen') && (await pg.locator('#labelStatus').getAttribute('class')).includes('emerald'), 'a green message lists what was read and which codes were seen');
   ok((await pg.locator('#labelPreviewImg').evaluate((i) => i.naturalWidth)) <= 900, 'the on-screen preview is a small copy (memory-friendly)');
+
+  /* 1b. the AI answer appears first; the scanner works in the background and never blocks */
+  await fresh(); mode = 'good'; await pg.setInputFiles('#labelGallery', big);
+  await pg.waitForFunction(() => document.getElementById('partNoInput').value === 'PHJ00006', null, { timeout: 30000 });
+  const early = await status(); const overlayGone = !(await pg.locator('#labelScanningOverlay').isVisible());
+  ok(early.includes('in the background') && overlayGone && (await val('barcodeInput')) === '', 'AI fields appear first, the busy screen is gone, and the barcode is still being read in the background');
+  await pg.waitForFunction(() => document.getElementById('barcodeInput').value === 'CBL0NL0050', null, { timeout: 30000 });
+  ok(!(await status()).includes('in the background'), 'then the scanner fills the Barcode box and the message is updated');
+
+  /* 1c. whatever the person types is never overwritten by a late scan */
+  await fresh(); mode = 'good'; await pg.setInputFiles('#labelGallery', big);
+  await pg.waitForFunction(() => document.getElementById('partNoInput').value === 'PHJ00006', null, { timeout: 30000 });
+  await pg.fill('#barcodeInput', 'TYPED-BY-HAND');
+  await pg.waitForFunction(() => !document.getElementById('labelStatus').textContent.includes('in the background'), null, { timeout: 30000 });
+  ok((await val('barcodeInput')) === 'TYPED-BY-HAND', 'a barcode typed by hand is not replaced by the late scan');
+
+  /* 1d. the scanner can be switched off in Setup */
+  await fresh(); await pg.evaluate(() => localStorage.setItem('sv_scanner', '0')); await pg.reload(); await pg.waitForFunction(READY);
+  mode = 'good'; await scan(big);
+  ok(!(await status()).includes('scan ') && !(await status()).includes('background') && (await val('partNoInput')) === 'PHJ00006', 'scanner off: only the AI runs, nothing in the background');
+  await pg.click('#openSettingsBtn'); ok(!(await pg.isChecked('#scannerToggle')), 'the Setup checkbox shows the scanner is off'); await pg.click('#cancelSettingsBtn');
 
   /* 2. AI fails, scanner still works */
   await fresh(); mode = 'error'; await scan(big);

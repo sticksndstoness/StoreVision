@@ -188,7 +188,7 @@
   function openSettings() {
     const s = settings();
     $('apiKeyInput').value = s.key; $('webhookUrlInput').value = s.url; $('webhookTokenInput').value = s.token;
-    $('useProxyToggle').checked = s.proxy; fillModelSelect(s.model);
+    $('useProxyToggle').checked = s.proxy; fillModelSelect(s.model); $('scannerToggle').checked = store.get('sv_scanner', '1') !== '0';
     syncDirectKeyVisibility();
     $('settingsModal').classList.remove('hidden');
     refreshDiagnostics().catch(() => {});
@@ -203,7 +203,7 @@
     const ok = [
       store.set(LS.KEY, $('apiKeyInput').value.trim()), store.set(LS.URL, url),
       store.set(LS.TOKEN, $('webhookTokenInput').value.trim()),
-      store.set(LS.PROXY, $('useProxyToggle').checked ? '1' : '0'), store.set(LS.MODEL, chosenModel())
+      store.set(LS.PROXY, $('useProxyToggle').checked ? '1' : '0'), store.set('sv_scanner', $('scannerToggle').checked ? '1' : '0'), store.set(LS.MODEL, chosenModel())
     ].every(Boolean);
     updateSyncBadge(); closeSettings();
     showToast(ok ? 'Settings saved on device' : '⚠ Could not store settings on this device');
@@ -283,13 +283,16 @@
     },
     required: ['bayTag', 'items']
   };
-  const LABEL_PROMPT = `Read the spare part label in this photo. The label may be small in the picture; read only the label.
-- partNo: the code printed after "PART NO" (for example PHJ00006).
-- description: the text after "DESC" (for example FUEL WATER SEPARATOR SPIN ON).
-- barcode: the serial text printed directly under the barcode (for example CBL0NL0050). Empty string if you cannot read it.
-- mrp: the number after "MRP: Rs." without currency symbol (for example 3470.00).
-- mfgDate: the month/year after "MANUFACTURED ON" (for example 11/2026).
-If a field is not clearly readable, use an empty string (or 0 for mrp). Do NOT guess.`;
+  // The first version's prompt, which read these labels well, plus one neutral hint about where fields sit on Leyparts labels.
+  const LABEL_PROMPT = `Extract spare part or product label details from this image. Return strict JSON:
+{
+  "partNo": "part number or SKU code if visible, else empty string",
+  "description": "item description or commodity name",
+  "barcode": "barcode text or serial number",
+  "mrp": numeric MRP price without currency symbol (e.g. 4110.00, or 0 if not found),
+  "mfgDate": "manufacturing date e.g. 08/2026"
+}
+On Leyparts labels the part number follows "PART NO", the description follows "DESC", and the serial is printed under the barcode.`;
   const stackPrompt = (focusCenter) => `You are a warehouse inventory vision counter.
 1. Read any rack bay label or zone sticker visible on the shelving uprights (e.g. D1, D2, A1, ZONE-1). Empty string if none.
 2. Detect every individual stacked box, carton, bucket, or product unit ${focusCenter ? 'in the primary foreground/center rack or stack (ignore distant background aisles and loose floor debris)' : 'visible in the image'}.
@@ -332,7 +335,8 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.key }, // header, not URL, so it stays out of logs/history
       body: JSON.stringify({
         contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: 'image/jpeg', data: base64Image } }] }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json', responseSchema: schema, maxOutputTokens: 8192 }
+        generationConfig: schema ? { temperature: 0.1, responseMimeType: 'application/json', responseSchema: schema, maxOutputTokens: 8192 }
+                                 : { temperature: 0.1, responseMimeType: 'application/json' }
       })
     });
     if (!res.ok) {
@@ -343,7 +347,10 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
   }
 
   /* ---------- label scan ---------- */
-  const LABEL_MAX_DIM = 2560;   // labels are often small in the frame: send/scan them sharp (the old 1024 made the text unreadable)
+  const LABEL_MAX_DIM = 1600;   // sharp enough for a label, far smaller to upload than 2560 (the first version used 1024)
+  let labelScanId = 0, barcodeTouched = false;
+  const scannerOn = () => store.get('sv_scanner', '1') !== '0';
+  const sec = (ms) => (ms / 1000).toFixed(1) + 's';
 
   function labelStatus(msg, kind) {   // a message that stays on screen (a toast vanishes before you can read it)
     const el = $('labelStatus'); if (!el) return;
@@ -351,54 +358,67 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     el.className = 'text-[11px] min-h-[1rem] ' + (kind === 'good' ? 'text-emerald-300' : kind === 'warn' ? 'text-amber-300' : kind === 'bad' ? 'text-rose-300' : 'text-slate-400');
   }
 
+  /** Builds the lasting message from what is known so far. Called when the AI answers and again when the scanner finishes. */
+  function renderLabelStatus(st) {
+    const filled = st.filled.slice(); const codes = st.codes || [];
+    const seen = codes.length ? ' Codes seen: ' + codes.map((c) => c.text.slice(0, 40)).join(' · ') + '.' : '';
+    const timing = ' (' + [st.aiMs != null ? 'AI ' + sec(st.aiMs) : null, st.scanMs != null ? 'scan ' + sec(st.scanMs) : null, st.kb ? st.kb + ' KB' : null, st.model].filter(Boolean).join(' · ') + ')';
+    const wait = st.scanning ? ' Reading the barcode in the background…' : '';
+    if (st.aiError && !filled.length) return labelStatus('Could not read this label. ' + st.aiError + ' Move closer so the label fills the frame, hold steady, and try again.' + wait + seen + timing, st.scanning ? 'info' : 'bad');
+    if (st.aiError) return labelStatus('Read: ' + filled.join(', ') + '. The AI could not read the rest (' + st.aiError + '). Fill in the other boxes by hand.' + wait + seen + timing, 'warn');
+    if (!filled.length) return labelStatus('Nothing could be read from this photo. Move closer so the label fills the frame, avoid glare, hold steady and try again.' + wait + seen + timing, st.scanning ? 'info' : 'bad');
+    const missing = ['Part No', 'Barcode', 'MRP'].filter((f) => !filled.some((x) => x.startsWith(f)));
+    labelStatus('Read: ' + filled.join(', ') + '.' + (missing.length && !st.scanning ? ' Not found: ' + missing.join(', ') + ' — please fill in.' : (st.scanning ? '' : ' Please check them.')) + wait + seen + timing, missing.length && !st.scanning ? 'warn' : 'good');
+  }
+
   async function handleLabelFile(input) {
     const file = input.files && input.files[0];
     input.value = ''; // allow re-selecting the same photo
     if (!file || busy.label) return;
     busy.label = true; labelStatus('Reading the label…');
+    const myId = ++labelScanId; barcodeTouched = false;
+    const st = { filled: [], codes: [], aiError: '', aiMs: null, scanMs: null, kb: 0, model: settings().proxy ? 'AI proxy' : settings().model, scanning: false };
+    let img;
     try {
-      const img = await compressImage(file, LABEL_MAX_DIM, { quality: 0.9, previewDim: 900, wantPixels: true, wantFullPixels: true });
+      img = await compressImage(file, LABEL_MAX_DIM, { quality: 0.82, previewDim: 900, wantPixels: scannerOn(), wantFullPixels: scannerOn() });
+      st.kb = Math.round(img.base64.length * 0.75 / 1024);
       $('labelPreviewWrap').classList.remove('hidden');
       $('labelPreviewImg').src = img.preview || img.dataUrl;
       $('labelScanningOverlay').classList.remove('hidden');
 
-      // two independent readers at the same time: the barcode scanner (on the phone, free, exact) and the AI (everything else)
-      const yieldUi = () => new Promise((r) => setTimeout(r, 0));
-      const scanP = (async () => {
-        const has1D = (r) => r.some((c) => c.format !== 'QR_CODE' && c.format !== 'DATA_MATRIX');
-        let res = img.pixels ? await SVScan.decode(img.pixels.data, img.pixels.width, img.pixels.height, { maxMs: 1800, yield: yieldUi }) : [];
-        if (!has1D(res) && img.fullPixels) {                          // quick pass found no barcode: look again at the original resolution
-          const full = img.fullPixels();
-          if (full) { const more = await SVScan.decode(full.data, full.width, full.height, { maxMs: 4000, yield: yieldUi }); const have = new Set(res.map((c) => c.text)); res = res.concat(more.filter((c) => !have.has(c.text))); }
-        }
-        return res;
-      })().catch(() => []);
-      const aiP = callGemini(img.base64, LABEL_PROMPT, LABEL_SCHEMA).then((d) => ({ d }), (e) => ({ e }));
-      const [codes, ai] = await Promise.all([scanP, aiP]);
-
-      const d = ai.d || {}; const filled = [];
-      const barcode = SVScan.pickBarcode(codes) || (d.barcode || '').trim();
-      if (d.partNo) { $('partNoInput').value = d.partNo; filled.push('Part No'); }
-      if (d.description) { $('descInput').value = d.description; filled.push('Description'); }
-      if (barcode) { $('barcodeInput').value = barcode; filled.push(SVScan.pickBarcode(codes) ? 'Barcode (scanned)' : 'Barcode'); }
-      if (d.mrp > 0) { $('mrpInput').value = d.mrp; filled.push('MRP'); }
-      if (d.mfgDate) { $('mfgInput').value = d.mfgDate; filled.push('Mfg date'); }
+      // 1) the AI answers first and the screen is released as soon as it does
+      const t0 = Date.now(); let d = {};
+      try { d = await callGemini(img.base64, LABEL_PROMPT, null); } catch (e) { st.aiError = e.message; showToast(e.message); }
+      st.aiMs = Date.now() - t0;
+      if (d.partNo) { $('partNoInput').value = d.partNo; st.filled.push('Part No'); }
+      if (d.description) { $('descInput').value = d.description; st.filled.push('Description'); }
+      if (d.barcode && !$('barcodeInput').value) { $('barcodeInput').value = String(d.barcode).trim(); st.filled.push('Barcode'); }
+      if (d.mrp > 0) { $('mrpInput').value = d.mrp; st.filled.push('MRP'); }
+      if (d.mfgDate) { $('mfgInput').value = d.mfgDate; st.filled.push('Mfg date'); }
       recalculateTotals();
-
-      const seen = codes.length ? ' Codes seen: ' + codes.map((c) => c.text.slice(0, 40)).join(' · ') + '.' : '';
-      if (ai.e && !filled.length) {
-        labelStatus('Could not read this label. ' + ai.e.message + ' Move closer so the label fills the frame, hold steady, and try again.' + seen, 'bad'); showToast(ai.e.message);
-      } else if (ai.e) {
-        labelStatus('Read: ' + filled.join(', ') + '. The AI could not read the rest (' + ai.e.message + '). Fill in the other boxes by hand.' + seen, 'warn'); showToast(ai.e.message);
-      } else if (!filled.length) {
-        labelStatus('Nothing could be read from this photo. Move closer so the label fills the frame, avoid glare, hold steady and try again.' + seen, 'bad'); showToast('Nothing could be read from this photo');
-      } else {
-        const missing = ['Part No', 'Barcode', 'MRP'].filter((f) => !filled.some((x) => x.startsWith(f)));
-        labelStatus('Read: ' + filled.join(', ') + '.' + (missing.length ? ' Not found: ' + missing.join(', ') + ' — please fill in.' : ' Please check them.') + seen, missing.length ? 'warn' : 'good');
-        showToast('Label read — please verify the details');
-      }
+      st.scanning = scannerOn() && !!img.pixels;
+      renderLabelStatus(st);
+      if (!st.aiError && st.filled.length) showToast('Label read — please verify the details');
     } catch (err) { labelStatus(err.message, 'bad'); showToast(err.message); }
     finally { busy.label = false; $('labelScanningOverlay').classList.add('hidden'); }
+
+    // 2) the on-device barcode scanner runs afterwards, in the background; it never delays the screen
+    if (!img || !st.scanning) return;
+    const t1 = Date.now(); const yieldUi = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      const has1D = (r) => r.some((c) => c.format !== 'QR_CODE' && c.format !== 'DATA_MATRIX');
+      let res = await SVScan.decode(img.pixels.data, img.pixels.width, img.pixels.height, { maxMs: 800, yield: yieldUi });
+      if (myId === labelScanId && !has1D(res) && img.fullPixels) {       // small barcode: look again at the original resolution
+        const full = img.fullPixels();
+        if (full) { const more = await SVScan.decode(full.data, full.width, full.height, { maxMs: 3000, yield: yieldUi }); const have = new Set(res.map((c) => c.text)); res = res.concat(more.filter((c) => !have.has(c.text))); }
+      }
+      st.codes = res;
+    } catch (e) { st.codes = []; }
+    st.scanMs = Date.now() - t1; st.scanning = false;
+    if (myId !== labelScanId) return;                                     // a newer photo has been taken: drop this result
+    const code = SVScan.pickBarcode(st.codes);
+    if (code && !barcodeTouched) { $('barcodeInput').value = code; st.filled = st.filled.filter((f) => !f.startsWith('Barcode')); st.filled.push('Barcode (scanned)'); recalculateTotals(); }
+    renderLabelStatus(st);
   }
 
   /* ---------- stack photo + pins ---------- */
@@ -781,6 +801,7 @@ Return the CENTER of each unit as x (left=0 to right=1000) and y (top=0 to botto
     ['mrpInput', 'hiddenOffsetInput'].forEach((id) => $(id).addEventListener('input', recalculateTotals));
     $('depthMultSelect').addEventListener('change', recalculateTotals);
     $('zoneInput').addEventListener('input', () => { zoneManual = true; });
+    $('barcodeInput').addEventListener('input', () => { barcodeTouched = true; });
     $('saveSyncBtn').addEventListener('click', saveAndSyncEntry);
     $('saveSyncBtn').disabled = true;     // enabled once storage has opened
     ['partNoInput', 'barcodeInput', 'descInput', 'mfgInput', 'zoneInput'].forEach((id) => $(id).addEventListener('input', scheduleDraft));
