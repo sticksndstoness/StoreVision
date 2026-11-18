@@ -85,11 +85,14 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 // deno-lint-ignore no-explicit-any
 async function loadPerson(admin: any, userId: string) {
-  const { data: p } = await admin.from('profiles').select('user_id, is_owner, active').eq('user_id', userId).maybeSingle();
+  const { data: p, error: pe } = await admin.from('profiles').select('user_id, is_owner, active').eq('user_id', userId).maybeSingle();
+  if (pe) throw new DbError('read profiles: ' + pe.message);          // a database/permission problem is NOT "inactive account"
   if (!p || !p.active) return null;
-  const { data: m } = await admin.from('memberships').select('branch_id, role, active').eq('user_id', userId);
+  const { data: m, error: me } = await admin.from('memberships').select('branch_id, role, active').eq('user_id', userId);
+  if (me) throw new DbError('read memberships: ' + me.message);
   return { isOwner: !!p.is_owner, memberships: m || [] };
 }
+class DbError extends Error {}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -149,7 +152,8 @@ Deno.serve(async (req: Request) => {
 
     return json({ error: 'Unknown action.' }, 400);
   } catch (e) {
-    console.error(e);
+    console.error(e);   // full detail goes to the function logs (Supabase > Edge Functions > team-admin > Logs)
+    if (e instanceof DbError) return json({ error: 'The server could not read the team data. The database setup may be incomplete - see the function logs.' }, 500);
     return json({ error: 'Something went wrong. Please try again.' }, 500);
   }
 });

@@ -11,6 +11,8 @@ create function t.as_user(u uuid) returns void language plpgsql as $$
 begin perform set_config('request.jwt.claim.sub', u::text, true); execute 'set local role authenticated'; end $$;
 create function t.as_anon() returns void language plpgsql as $$
 begin perform set_config('request.jwt.claim.sub', '', true); execute 'set local role anon'; end $$;
+create function t.as_service() returns void language plpgsql as $$
+begin perform set_config('request.jwt.claim.sub', '', true); execute 'set local role service_role'; end $$;
 create function t.back() returns void language plpgsql as $$
 begin execute 'reset role'; perform set_config('request.jwt.claim.sub', '', true); end $$;
 
@@ -174,5 +176,31 @@ do $$ begin
   exception when unique_violation then perform t.pass('the same email cannot belong to two profiles (case-insensitive)'); end;
 end $$;
 select t.check(t.count_as(:'C1', 'select 1 from public.profiles where email is not null') <= 1, 'a counter can only ever see their own email, not colleagues');
+
+-- ------------------------------------------------------------------ the server-side key (what the team-admin Edge Function uses)
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-0000000000c1', 'newperson@example.test');
+do $$ declare n bigint; begin
+  perform t.as_service();
+  select count(*) into n from public.profiles where is_owner and active;                       -- loadPerson: read profile
+  if n < 1 then raise exception 'FAIL - service key cannot read profiles'; end if;
+  select count(*) into n from public.memberships; select count(*) into n from public.branches;   -- read memberships / branches
+  insert into public.profiles (user_id, full_name, email, is_owner) values ('00000000-0000-0000-0000-0000000000c1', 'New Person', 'newperson@example.test', false);
+  insert into public.memberships (user_id, branch_id, role, created_by) select '00000000-0000-0000-0000-0000000000c1', id, 'counter', null from public.branches where code = '6696';
+  insert into public.audit_log (actor, branch_id, table_name, row_key, action, new_data) select null, id, 'team_action', 'x', 'create_user', '{}'::jsonb from public.branches where code = '6696';
+  perform t.back();
+  perform t.pass('service key can do everything create_user needs (read people, add profile + membership, write audit row)');
+exception when insufficient_privilege then perform t.back(); raise exception 'FAIL - service key lacks a privilege the Edge Function needs: %', sqlerrm;
+end $$;
+do $$ begin
+  perform t.as_service();
+  update public.memberships set active = false where user_id = '00000000-0000-0000-0000-0000000000c1';
+  perform t.back(); perform t.pass('service key can update memberships');
+exception when insufficient_privilege then perform t.back(); raise exception 'FAIL - service key cannot update: %', sqlerrm;
+end $$;
+do $$ begin
+  perform t.as_anon();
+  begin insert into public.audit_log (table_name, action) values ('x', 'y'); raise exception 'FAIL - anon wrote to the audit log';
+  exception when insufficient_privilege then perform t.back(); perform t.pass('the public key still cannot write the audit log'); end;
+end $$;
 
 select 'ALL DONE' as result;
