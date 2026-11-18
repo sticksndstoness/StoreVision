@@ -15,7 +15,7 @@
 var SHEET_NAME = 'Inventory';
 var HEADERS = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date',
   'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value',
-  'AI Counted', 'Edited', 'Updated At'];
+  'AI Counted', 'Edited', 'Counted/Verified', 'Updated At'];
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
@@ -39,6 +39,7 @@ function doPost(e) {
     if (!tokenOk_(body.token)) return json_({ ok: false, error: 'Unauthorized: bad or missing token' });
     if (body.action === 'append') return json_(appendEntry_(body.entry));
     if (body.action === 'vision') return json_(vision_(body));
+    if (body.action === 'models') return json_(models_());
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -64,7 +65,7 @@ function appendEntry_(en) {
     var row = [en.id, en.isoTime, en.zone, en.partNo, en.description, en.barcode, en.mfgDate,
       Number(en.visibleCount) || 0, Number(en.hiddenQty) || 0, Number(en.depthMult) || 1,
       Number(en.totalQty) || 0, Number(en.mrp) || 0, Number(en.totalValue) || 0,
-      en.aiCounted ? 'yes' : 'no', en.edited ? 'yes' : 'no', new Date().toISOString()].map(safeCell_);
+      en.aiCounted ? 'yes' : 'no', en.edited ? 'yes' : 'no', en.counted ? 'yes' : 'no', new Date().toISOString()].map(safeCell_);
     var last = sh.getLastRow();
     var rowIdx = -1;
     if (last > 1) {
@@ -82,7 +83,7 @@ function vision_(b) {
   var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!key) return { ok: false, error: 'GEMINI_API_KEY is not set in Script Properties' };
   if (!b.image || b.image.length > 6 * 1024 * 1024) return { ok: false, error: 'Missing or oversized image' };
-  var model = /^[a-z0-9.\-]+$/i.test(b.model || '') ? b.model : 'gemini-2.5-flash';
+  var model = /^[a-z0-9.\-]+$/i.test(b.model || '') ? b.model : 'gemini-3.8-flash';
   var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-goog-api-key': key },
@@ -94,5 +95,17 @@ function vision_(b) {
   var code = res.getResponseCode();
   var parsed = JSON.parse(res.getContentText());
   if (code !== 200) return { ok: false, error: (parsed.error && parsed.error.message) || ('Gemini error ' + code) };
+  return { ok: true, result: parsed };
+}
+
+/** Lists models the server-side Gemini key can use (for the app's "Check available models" button). */
+function models_() {
+  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key) return { ok: false, error: 'GEMINI_API_KEY is not set in Script Properties' };
+  var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+    method: 'get', muteHttpExceptions: true, headers: { 'x-goog-api-key': key }
+  });
+  var parsed = JSON.parse(res.getContentText());
+  if (res.getResponseCode() !== 200) return { ok: false, error: (parsed.error && parsed.error.message) || ('Gemini error ' + res.getResponseCode()) };
   return { ok: true, result: parsed };
 }

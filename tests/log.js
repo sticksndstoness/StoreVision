@@ -1,0 +1,32 @@
+// Log tools: search, bay filter, verified filter, grouping, filtered CSV export.
+const { chromium } = require('playwright');
+const http = require('http'), fs = require('fs'), path = require('path');
+const root = path.join(__dirname, '..');
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const srv = http.createServer((q, r) => { const f = path.join(root, q.url.split('?')[0] === '/' ? 'index.html' : q.url.split('?')[0]); fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); return r.end(); } r.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' }); r.end(d); }); });
+let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails++; };
+const mk = (id, zone, partNo, desc, qty, counted) => ({ id, isoTime: new Date().toISOString(), zone, partNo, description: desc, barcode: '', mfgDate: '', visibleCount: qty, hiddenQty: 0, depthMult: 1, totalQty: qty, mrp: 10, totalValue: qty * 10, aiCounted: false, edited: false, counted, syncStatus: 'pending' });
+(async () => {
+  await new Promise((r) => srv.listen(0, r));
+  const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', acceptDownloads: true }); const p = await ctx.newPage();
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  await p.route(/cdn\.tailwindcss|cdnjs/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await p.goto('http://localhost:' + srv.address().port + '/');
+  await p.evaluate((d) => localStorage.setItem('sv_inventory_log', JSON.stringify(d)), [mk('a', 'D1', 'AF-1', 'Air filter', 5, true), mk('b', 'D10', 'OF-2', 'Oil filter', 3, false), mk('c', 'D2', 'BP-3', 'Brake pad', 2, false)]);
+  await p.reload();
+  const rows = () => p.locator('#logList input[data-act=counted]').count();
+  ok((await rows()) === 3 && (await p.textContent('#logSummary')).includes('10 pcs'), 'all 3 shown, summary 10 pcs');
+  await p.fill('#logSearch', 'filter'); await p.waitForTimeout(300); ok((await rows()) === 2, 'search "filter" -> 2');
+  await p.fill('#logSearch', ''); await p.waitForTimeout(300);
+  await p.selectOption('#logZoneFilter', 'D2'); ok((await rows()) === 1 && (await p.textContent('#csvLabel')).includes('filtered'), 'bay filter D2 -> 1, CSV label says filtered');
+  const [dl] = await Promise.all([p.waitForEvent('download'), p.click('#exportCsvBtn')]);
+  ok(/storevision_D2_/.test(dl.suggestedFilename()), 'filtered CSV filename has bay: ' + dl.suggestedFilename());
+  const csv = fs.readFileSync(await dl.path(), 'utf8'); ok(csv.includes('BP-3') && !csv.includes('AF-1'), 'filtered CSV only has D2 rows');
+  await p.selectOption('#logZoneFilter', ''); await p.selectOption('#logCountedFilter', 'no'); ok((await rows()) === 2, 'To verify -> 2');
+  await p.locator('#logList input[data-act=counted]').first().click(); ok((await rows()) === 1, 'ticking Verified moves row out of "To verify"');
+  await p.selectOption('#logCountedFilter', ''); await p.check('#logGroupToggle');
+  const html = await p.locator('#logList').innerText(); ok(html.indexOf('D1') < html.indexOf('D2') && html.indexOf('D2') < html.indexOf('D10'), 'groups sorted D1, D2, D10');
+  ok(html.includes('SKUs'), 'group subtotals shown');
+  ok(errs.length === 0, 'no page errors ' + errs.join('|'));
+  await b.close(); srv.close(); process.exit(fails ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(1); });

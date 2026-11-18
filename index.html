@@ -16,9 +16,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
-<body class="min-h-screen pb-24">
+<body class="pb-24">
 
-  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+  <header id="appHeader" class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 pb-3 flex items-center justify-between">
     <div class="flex items-center gap-2.5">
       <div class="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400" aria-hidden="true">
         <i class="fa-solid fa-boxes-stacked text-base"></i>
@@ -39,7 +39,7 @@
     </div>
   </header>
 
-  <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
+  <main class="max-w-lg mx-auto px-4 pt-4 space-y-4 pb-8">
 
     <!-- STEP 1 -->
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg" aria-labelledby="h-step1">
@@ -199,11 +199,22 @@
         <h3 id="h-log" class="text-sm font-bold text-white"><i class="fa-solid fa-clipboard-list text-amber-400 mr-1.5" aria-hidden="true"></i>Inventory Log (<span id="logCount">0</span>)</h3>
         <div class="flex items-center gap-1.5">
           <button id="retryAllBtn" type="button" class="hidden px-2.5 py-1.5 rounded-lg bg-amber-500/20 text-[11px] font-semibold text-amber-300 border border-amber-500/40"><i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Retry <span id="unsyncedCount">0</span></button>
-          <button id="exportCsvBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-solid fa-file-csv mr-1 text-emerald-400" aria-hidden="true"></i>CSV</button>
+          <button id="exportCsvBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-solid fa-file-csv mr-1 text-emerald-400" aria-hidden="true"></i><span id="csvLabel">CSV</span></button>
           <button id="shareBtn" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-200 border border-slate-700"><i class="fa-brands fa-whatsapp mr-1 text-green-400" aria-hidden="true"></i>Share</button>
         </div>
       </div>
-      <div id="logList" class="space-y-2 max-h-80 overflow-y-auto"></div>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="col-span-2"><span class="sr-only">Search log</span>
+          <input id="logSearch" type="search" placeholder="Search part no, description, barcode…" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-sky-500 focus:outline-none" /></label>
+        <label><span class="sr-only">Filter by bay</span>
+          <select id="logZoneFilter" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-amber-300"><option value="">All bays</option></select></label>
+        <label><span class="sr-only">Filter by counted status</span>
+          <select id="logCountedFilter" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-slate-200">
+            <option value="">All entries</option><option value="no">To verify</option><option value="yes">Verified</option></select></label>
+        <label class="col-span-2 flex items-center gap-2 text-[11px] text-slate-300"><input id="logGroupToggle" type="checkbox" class="accent-amber-500 w-4 h-4" /> Group by bay with subtotals</label>
+      </div>
+      <p id="logSummary" class="text-[11px] text-slate-400"></p>
+      <div id="logList" class="space-y-2 max-h-[28rem] overflow-y-auto"></div>
       <button id="clearLogBtn" type="button" class="hidden w-full text-[11px] text-rose-300/80 underline py-1">Clear entire local log</button>
     </section>
   </main>
@@ -236,8 +247,11 @@
           <p class="text-[10px] text-slate-400 mt-1">Stored in this browser only. Restrict the key in Google Cloud (HTTP referrer + Generative Language API only).</p>
         </div>
         <div>
-          <label for="modelInput" class="block text-xs font-semibold text-slate-300 mb-1">Gemini Model</label>
-          <input id="modelInput" type="text" placeholder="gemini-2.5-flash" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none" />
+          <label for="modelSelect" class="block text-xs font-semibold text-slate-300 mb-1">Gemini Model</label>
+          <select id="modelSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none"></select>
+          <input id="modelCustomInput" type="text" autocomplete="off" placeholder="Type a model ID, e.g. gemini-3.8-flash" class="hidden mt-2 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-mono text-white focus:border-amber-500 focus:outline-none" />
+          <button id="checkModelsBtn" type="button" class="mt-2 w-full px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-sky-300"><i class="fa-solid fa-magnifying-glass mr-1.5" aria-hidden="true"></i>Check available models</button>
+          <p id="modelStatus" class="text-[10px] text-slate-400 mt-1">Default is <span class="font-mono">gemini-3.8-flash</span>. Tap "Check available models" to list what your key can use.</p>
         </div>
       </div>
 

@@ -63,6 +63,22 @@
     catch (e) { throw new Error('Could not understand the AI response (invalid JSON). Try again.'); }
   };
 
+  /** Turn a Gemini ListModels response into [{id,label}] of models usable for image -> JSON (generateContent). */
+  SVCore.parseModelList = function (json) {
+    const list = (json && Array.isArray(json.models)) ? json.models : [];
+    const skip = /embed|tts|imagen|veo|live|audio|aqa|image-generation|robotics|learnlm/i;
+    const seen = new Set(); const out = [];
+    for (const m of list) {
+      const id = String(m && m.name || '').replace(/^models\//, '');
+      if (!id || seen.has(id) || skip.test(id)) continue;
+      if (Array.isArray(m.supportedGenerationMethods) && !m.supportedGenerationMethods.includes('generateContent')) continue;
+      seen.add(id); out.push({ id, label: m.displayName || id });
+    }
+    // flash-class first (default for this app), then the rest newest-looking (reverse natural order) first
+    const rank = (id) => (/flash/i.test(id) && !/lite/i.test(id) ? 0 : /pro/i.test(id) ? 1 : /lite/i.test(id) ? 2 : 3);
+    return out.sort((a, b) => rank(a.id) - rank(b.id) || b.id.localeCompare(a.id, undefined, { numeric: true }));
+  };
+
   SVCore.makeId = function () {
     return 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   };
@@ -82,16 +98,42 @@
       barcode: r.barcode || '', mfgDate: r.mfgDate || '',
       visibleCount: visible, hiddenQty: Number(r.hiddenOffset) || 0, depthMult: 1,
       totalQty: Number(r.totalQty) || 0, mrp: Number(r.mrp) || 0, totalValue: Number(r.totalValue) || 0,
-      aiCounted: false, edited: false, syncStatus: 'pending'
+      aiCounted: false, edited: false, counted: false, syncStatus: 'pending'
     };
   };
 
+  /** Filter by free-text query and/or exact zone. */
+  SVCore.filterEntries = function (entries, { q = '', zone = '', counted = '' } = {}) {
+    const needle = String(q).trim().toLowerCase();
+    return entries.filter((e) => {
+      if (zone && e.zone !== zone) return false;
+      if (counted === 'yes' && !e.counted) return false;
+      if (counted === 'no' && e.counted) return false;
+      if (!needle) return true;
+      return [e.partNo, e.description, e.barcode, e.zone].some((f) => String(f || '').toLowerCase().includes(needle));
+    });
+  };
+
+  SVCore.uniqueZones = function (entries) {
+    return Array.from(new Set(entries.map((e) => e.zone))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
+
+  /** Group (already filtered) entries by zone, with qty/value subtotals. Order: zone name, entries keep their order. */
+  SVCore.groupByZone = function (entries) {
+    const map = new Map();
+    for (const e of entries) {
+      if (!map.has(e.zone)) map.set(e.zone, { zone: e.zone, entries: [], qty: 0, value: 0 });
+      const g = map.get(e.zone); g.entries.push(e); g.qty += Number(e.totalQty) || 0; g.value += Number(e.totalValue) || 0;
+    }
+    return Array.from(map.values()).sort((a, b) => a.zone.localeCompare(b.zone, undefined, { numeric: true }));
+  };
+
   SVCore.entriesToCsv = function (entries) {
-    const headers = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date', 'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value', 'AI Counted', 'Edited', 'Sync Status'];
+    const headers = ['ID', 'Timestamp (ISO)', 'Bay/Zone', 'Part No', 'Description', 'Barcode', 'Mfg Date', 'Visible Count', 'Hidden Qty (typed)', 'Depth Mult', 'Total Qty', 'MRP', 'Total Value', 'AI Counted', 'Edited', 'Counted/Verified', 'Sync Status'];
     const rows = entries.map((r) => [
       r.id, r.isoTime, r.zone, r.partNo, r.description, r.barcode, r.mfgDate,
       r.visibleCount, r.hiddenQty, r.depthMult, r.totalQty, r.mrp, r.totalValue,
-      r.aiCounted ? 'yes' : 'no', r.edited ? 'yes' : 'no', r.syncStatus
+      r.aiCounted ? 'yes' : 'no', r.edited ? 'yes' : 'no', r.counted ? 'yes' : 'no', r.syncStatus
     ].map(SVCore.csvCell).join(','));
     return '﻿' + [headers.map(SVCore.csvCell).join(','), ...rows].join('\r\n');
   };
